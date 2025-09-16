@@ -1,0 +1,27 @@
+{
+  "endpoint_url": "https://script.google.com/macros/s/REPLACE_WITH_YOUR_WEBAPP_ID/exec",
+  "endpoint_auth_header": {
+    "X-Auth": "REPLACE_WITH_SHARED_SECRET"
+  },
+  "google_chat_webhook_url": "",
+  "frequencies_hz": [
+    500,
+    1000,
+    2000,
+    4000
+  ],
+  "initial_dbhl": 40,
+  "step_db": 5,
+  "min_dbhl": -10,
+  "tone_duration_s": 0.8,
+  "gap_s": 0.2,
+  "sample_rate": 48000,
+  "audio_device_index": null,
+  "calibration_0dBHL_amplitude": {
+    "500": 0.06,
+    "1000": 0.05,
+    "2000": 0.04,
+    "4000": 0.035
+  },
+  "dry_run": true
+}

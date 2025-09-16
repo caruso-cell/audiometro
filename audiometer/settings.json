@@ -1,0 +1,26 @@
+{
+  "sample_rate": 48000,
+  "left_channel_index": 0,
+  "right_channel_index": 1,
+  "frequencies_hz": [
+    125,
+    250,
+    500,
+    1000,
+    2000,
+    3000,
+    4000,
+    6000,
+    8000
+  ],
+  "step_db": 5,
+  "min_level_dbhl": 0,
+  "start_level_dbhl": 0,
+  "max_level_dbhl": 100,
+  "tone_duration_ms": 1000,
+  "isi_ms_min": 1200,
+  "isi_ms_max": 2500,
+  "verification_max_cycles": 8,
+  "default_output_device": "Altoparlanti (2- Realtek(R) Aud",
+  "enable_calibration": false
+}
