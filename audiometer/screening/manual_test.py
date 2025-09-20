@@ -33,7 +33,7 @@ class ManualTest:
 
         self.freqs = self.settings['frequencies_hz']
         self.freq_index = 0
-        self.level_db = 40  # livello iniziale
+        self.level_db = float(self.settings.get('start_level_dbhl', 40))  # livello iniziale
         self.ear = "R"
 
     # ---------------- Utils ----------------

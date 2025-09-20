@@ -1,4 +1,4 @@
-ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¯ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â»ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¿from __future__ import annotations
+from __future__ import annotations
 from typing import Optional, Dict, Any, List
 import os
 import shutil
@@ -276,16 +276,19 @@ class MainWindow(QMainWindow):
         return bool(self.session.points_od or self.session.points_os)
 
     def _build_results_table(self) -> str:
-        rows = ["Freq (Hz) | OD (dB HL) | OS (dB HL)"]
-        for freq in self._freqs:
-            od = self.session.points_od.get(freq)
-            os_val = self.session.points_os.get(freq)
-            if od is None and os_val is None:
-                continue
-            rows.append(f"{freq:>7} | {od if od is not None else '-':>10} | {os_val if os_val is not None else '-':>10}")
-        if len(rows) == 1:
-            rows.append('(Nessun punto registrato)')
-        return "\n".join(rows)
+        col_w = 6
+        freq_cells = [f"{freq:>{col_w}}" for freq in self._freqs]
+        def _fmt(val):
+            if val is None:
+                return f"{'-':>{col_w}}"
+            return f"{int(round(val)):>{col_w}}"
+        od_cells = [_fmt(self.session.points_od.get(freq)) for freq in self._freqs]
+        os_cells = [_fmt(self.session.points_os.get(freq)) for freq in self._freqs]
+        label_w = 14
+        line_freq = f"{'Freq (Hz)':>{label_w}}: " + ' '.join(freq_cells)
+        line_od = f"{'OD (dB HL) dx':>{label_w}}: " + ' '.join(od_cells)
+        line_os = f"{'OS (dB HL) sx':>{label_w}}: " + ' '.join(os_cells)
+        return "\n".join([line_freq, line_od, line_os])
 
     def _apply_state_to_controls(self) -> None:
         freq = self._freqs[self._current_freq_index]
@@ -390,7 +393,7 @@ class MainWindow(QMainWindow):
             self._show_controls(False)
             self._set_exam_controls_enabled(False)
             self.graph.set_overlays([])
-                self._update_status_bar()
+            self._update_status_bar()
             self._refresh_exam_history()
             self._update_placeholder_message()
         self.current_device = device
@@ -560,8 +563,10 @@ class MainWindow(QMainWindow):
                 self.current_device,
                 exam,
                 self.session.notes,
+                '',
                 tmp_path,
                 table_text,
+                '',
             )
             self.set_status(f"Relazione PDF creata in: {out_pdf}")
         finally:

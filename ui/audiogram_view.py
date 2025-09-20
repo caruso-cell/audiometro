@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 from typing import Optional, Dict, Sequence, Any, List
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QApplication
 from PySide6.QtCore import QBuffer, QIODevice, Qt
@@ -183,10 +183,20 @@ class AudiogramView(QWidget):
                     self.legend.addItem(line, legend_label)
                 self._overlay_items.append(line)
 
-    def export_png_bytes(self) -> bytes:
-        QApplication.processEvents()
-        pixmap = self.plot.grab()
-        buffer = QBuffer()
-        buffer.open(QIODevice.WriteOnly)
-        pixmap.save(buffer, 'PNG')
-        return bytes(buffer.data())
+    def export_png_bytes(self, hide_crosshair: bool = False) -> bytes:
+        to_restore = []
+        if hide_crosshair:
+            for line in (self.hline, self.vline):
+                if line is not None:
+                    to_restore.append((line, line.isVisible()))
+                    line.setVisible(False)
+        try:
+            QApplication.processEvents()
+            pixmap = self.plot.grab()
+            buffer = QBuffer()
+            buffer.open(QIODevice.WriteOnly)
+            pixmap.save(buffer, 'PNG')
+            return bytes(buffer.data())
+        finally:
+            for line, visible in to_restore:
+                line.setVisible(visible)

@@ -1,4 +1,4 @@
-﻿import tkinter as tk
+import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 import os
 from dotenv import load_dotenv
@@ -9,7 +9,6 @@ from ..app_controller import AppController
 from ..plotting.audiogram_plot import LiveAudiogram
 from .theme import configure_style, get_logo_path, resource_path
 from ..export.pdf_report import build_pdf_report_v3 as build_pdf_report
-from ..ai.analysis_client import generate_analysis_via_prompt
 from ..version import __version__
 
 ALNUM_RE = re.compile(r"^[A-Za-z0-9]+$")
@@ -208,25 +207,10 @@ class MainWindow:
         self.txt_notes = tk.Text(frm_notes, height=5, wrap='word')
         self.txt_notes.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
         row_btn = ttk.Frame(frm_notes); row_btn.pack(fill=tk.X, padx=6, pady=4)
-        ttk.Button(row_btn, text="Genera analisi (AI)", command=self._generate_analysis).pack(side=tk.LEFT, padx=4)
-        ttk.Button(row_btn, text="Test AI", command=self._test_ai).pack(side=tk.LEFT, padx=4)
         ttk.Button(row_btn, text="Salva note", command=self._save_notes).pack(side=tk.LEFT, padx=4)
-        self.lbl_ai_status = ttk.Label(frm_notes, text="AI: in attesa", justify="left")
-        self.lbl_ai_status.pack(anchor="w", padx=6)
         try:
             self.txt_notes.delete('1.0', tk.END)
             self.txt_notes.insert('1.0', self.controller.get_exam_notes())
-        except Exception:
-            pass
-
-        # Anteprima soglie inviate all'AI
-        frm_prev = ttk.LabelFrame(self.tab_res, text="Anteprima soglie inviate all'AI")
-        frm_prev.pack(fill=tk.X, padx=8, pady=4)
-        self.txt_ai_preview = tk.Text(frm_prev, height=4, wrap='none')
-        self.txt_ai_preview.pack(fill=tk.X, padx=6, pady=6)
-        try:
-            self.txt_ai_preview.insert('1.0', 'Hz, ...\nOD (R), ...\nOS (L), ...')
-            self.txt_ai_preview.config(state='disabled')
         except Exception:
             pass
 
@@ -1116,147 +1100,6 @@ class MainWindow:
             messagebox.showerror("Import", str(e))
 
     # --- Note/analisi ---
-    def _generate_analysis(self):
-        try:
-            try:
-                self.lbl_ai_status.config(text="AI: invio richiesta...")
-            except Exception:
-                pass
-            # Build results map and call AI prompt generator (optionally hitting an endpoint if configured)
-            res_map = self.controller.results_map_current()
-            freqs = self.controller.settings.get('frequencies_hz', [])
-            patient = {
-                'id': self.controller.patient.get('id',''),
-                'nome': self.controller.patient.get('nome',''),
-                'cognome': self.controller.patient.get('cognome',''),
-                'birth_date': self.controller.patient.get('birth_date'),
-                'sex': self.controller.patient.get('sex'),
-            }
-            # Render current audiogram to PNG bytes
-            from io import BytesIO
-            from ..plotting.audiogram_plot import render_audiogram_image
-            imgs: list[bytes] = []
-            # Helper to derive map from rows if needed
-            def _map_from_rows(rows_list):
-                m = {'R': {}, 'L': {}}
-                for r in rows_list or []:
-                    try:
-                        if isinstance(r, dict):
-                            ear, f, db = r.get('ear'), int(r.get('freq')), float(r.get('dbhl'))
-                        else:
-                            ear, f, db = r[2], int(r[3]), float(r[4])
-                        if ear in ('R','L'):
-                            m[ear][f] = db
-                    except Exception:
-                        continue
-                return m
-            try:
-                rows = self.controller.get_results_rows()
-                fig, _ = render_audiogram_image(rows, patient, self.controller.get_active_device(), freqs=freqs, out_path=None, dpi=170)
-                buf = BytesIO(); fig.savefig(buf, format='png', dpi=170, bbox_inches='tight'); fig.clf(); buf.seek(0)
-                imgs.append(buf.read())
-                # If res_map is empty, derive it from rows
-                if not any((res_map.get('R') or {}).values()) and not any((res_map.get('L') or {}).values()):
-                    res_map = _map_from_rows(rows)
-            except Exception:
-                pass
-            # If an archive preview is loaded, render also that
-            try:
-                prev = self.controller.get_preview_rows()
-                if prev:
-                    fig2, _ = render_audiogram_image(prev, patient, self.controller.get_active_device(), freqs=freqs, out_path=None, dpi=170)
-                    buf2 = BytesIO(); fig2.savefig(buf2, format='png', dpi=170, bbox_inches='tight'); fig2.clf(); buf2.seek(0)
-                    imgs.append(buf2.read())
-                    # If still empty map, use archive preview as fallback for thresholds
-                    if not any((res_map.get('R') or {}).values()) and not any((res_map.get('L') or {}).values()):
-                        res_map = _map_from_rows(prev)
-            except Exception:
-                pass
-
-            # Update on-screen preview of thresholds sent to AI
-            try:
-                header = 'Hz,' + ','.join(str(f) for f in freqs)
-                def _row(ear, label):
-                    vals = []
-                    for f in freqs:
-                        v = (res_map.get(ear, {}) or {}).get(f)
-                        vals.append(str(v) if v is not None else '-')
-                    return label + ',' + ','.join(vals)
-                preview = '\n'.join([header, _row('R','OD (R)'), _row('L','OS (L)')])
-                self.txt_ai_preview.config(state='normal')
-                self.txt_ai_preview.delete('1.0', tk.END)
-                self.txt_ai_preview.insert('1.0', preview)
-                self.txt_ai_preview.config(state='disabled')
-            except Exception:
-                pass
-
-            text = generate_analysis_via_prompt(patient, res_map, freqs, images_png=imgs or None)
-            # If AI not configured or failed, the function returns the prompt text itself.
-            # Detect and guide the user.
-            try:
-                from ..ai.prompt_loader import load_prompt_text
-                base = (load_prompt_text() or '').strip()
-            except Exception:
-                base = ''
-            # Detect fallback prompt or explicit AI error marker
-            is_prompt_echo = False
-            tstrip = (text or '').strip()
-            if base and tstrip.startswith(base[:40]):
-                # Further check presence of prompt markers
-                if ('[DATI ASSISTITO]' in tstrip) or ('[SOGLIE dB HL]' in tstrip) or ('RICHIESTA' in tstrip):
-                    is_prompt_echo = True
-            if tstrip.startswith('__AI_ERROR__'):
-                is_prompt_echo = True
-            if is_prompt_echo:
-                from os import getenv
-                key_hint = 'OPENAI_API_KEY' if getenv('OPENAI_API_KEY') else 'AI_API_KEY'
-                # Fallback: usa analisi locale non diagnostica per non lasciare il prompt nelle note
-                try:
-                    local_txt = self.controller.generate_exam_analysis()
-                    text = local_txt
-                except Exception:
-                    pass
-                messagebox.showwarning(
-                    "Analisi AI",
-                    f"Nessuna risposta AI valida. Verifica {key_hint} in .env e la connettività."
-                )
-            # Save into notes
-            self.txt_notes.delete('1.0', tk.END)
-            self.txt_notes.insert('1.0', text)
-            self.controller.set_exam_notes(text)
-            try:
-                img_info = f", immagini={len(imgs)}" if imgs else ""
-                self.lbl_ai_status.config(text=f"AI: ok ({len(text)} caratteri{img_info})")
-            except Exception:
-                pass
-        except Exception as e:
-            try:
-                self.lbl_ai_status.config(text=f"AI: errore - {e}")
-            except Exception:
-                pass
-            messagebox.showerror("Analisi", str(e))
-
-    def _test_ai(self):
-        try:
-            freqs = self.controller.settings.get('frequencies_hz', [])
-            # Build tiny synthetic map if empty
-            m = self.controller.results_map_current()
-            if not any((m.get('R') or {}).values()) and not any((m.get('L') or {}).values()):
-                if freqs:
-                    f0 = freqs[min(3, len(freqs)-1)]
-                    m = {'R': {f0: 30.0}, 'L': {f0: 35.0}}
-            patient = {
-                'id': self.controller.patient.get('id','TEST'),
-                'nome': self.controller.patient.get('nome',''),
-                'cognome': self.controller.patient.get('cognome',''),
-                'birth_date': self.controller.patient.get('birth_date'),
-                'sex': self.controller.patient.get('sex'),
-            }
-            txt = generate_analysis_via_prompt(patient, m, freqs, images_png=None)
-            show = (txt or '')[:500]
-            messagebox.showinfo("Test AI", f"Risposta parziale (500c):\n\n{show}")
-        except Exception as e:
-            messagebox.showerror("Test AI", str(e))
 
     def _save_notes(self):
         try:

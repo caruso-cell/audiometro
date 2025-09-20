@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 from typing import Optional, Dict, Any
 import math
 import threading
@@ -28,10 +28,104 @@ class AudioEngine:
         self._playing = False
         self._samples_since_start = 0
         self._auto_stop_seconds = 3.0
+        self._channel_map: Dict[str, int] = {"OS": 0, "OD": 1}
+        self._channel_count = 2
 
     def set_profile(self, profile: Dict[str, Any]) -> None:
         self.profile = profile
-        self.max_db_hl = float(profile.get("max_db_hl", 100.0))
+        self.max_db_hl = float(profile.get("max_db_hl", self.max_db_hl))
+        self._apply_profile_settings(profile)
+
+    def _apply_profile_settings(self, profile: Dict[str, Any]) -> None:
+        device_info = profile.get("device") or {}
+        sample_rate = device_info.get("sample_rate") or profile.get("sample_rate")
+        if sample_rate is not None:
+            try:
+                self.sample_rate = int(sample_rate)
+            except (TypeError, ValueError):
+                pass
+        channel_map = self._extract_channel_map(profile)
+        if channel_map:
+            self.set_channel_map(channel_map)
+
+    def _extract_channel_map(self, profile: Dict[str, Any]) -> Dict[str, int]:
+        def _from_container(container: Dict[str, Any]) -> Dict[str, int]:
+            keys = ("channel_map", "channels_map", "channel_indices", "channel_roles")
+            for key in keys:
+                raw = container.get(key)
+                if isinstance(raw, dict):
+                    norm = self._normalise_channel_dict(raw)
+                    if norm:
+                        return norm
+            left = container.get("left_channel_index")
+            right = container.get("right_channel_index")
+            mapping: Dict[str, int] = {}
+            if left is not None:
+                try:
+                    mapping["OS"] = int(left)
+                except (TypeError, ValueError):
+                    pass
+            if right is not None:
+                try:
+                    mapping["OD"] = int(right)
+                except (TypeError, ValueError):
+                    pass
+            return mapping
+
+        for container in (profile, profile.get("device") or {}, profile.get("headphones") or {}):
+            if isinstance(container, dict):
+                mapping = _from_container(container)
+                if mapping:
+                    return mapping
+        return {}
+
+    @staticmethod
+    def _normalise_ear_label(label: Any) -> Optional[str]:
+        text = str(label).strip().upper()
+        aliases = {
+            "R": "OD",
+            "RIGHT": "OD",
+            "DX": "OD",
+            "OD": "OD",
+            "EAR_R": "OD",
+            "L": "OS",
+            "LEFT": "OS",
+            "SX": "OS",
+            "OS": "OS",
+            "EAR_L": "OS",
+        }
+        return aliases.get(text)
+
+    def _normalise_channel_dict(self, data: Dict[Any, Any]) -> Dict[str, int]:
+        mapping: Dict[str, int] = {}
+        for key, value in data.items():
+            ear = self._normalise_ear_label(key)
+            if ear is None:
+                continue
+            try:
+                idx = int(value)
+            except (TypeError, ValueError):
+                continue
+            if idx < 0:
+                continue
+            mapping[ear] = idx
+        return mapping
+
+    def set_channel_map(self, mapping: Dict[Any, Any]) -> None:
+        normalised = self._normalise_channel_dict(mapping)
+        if not normalised:
+            return
+        changed = False
+        for ear, idx in normalised.items():
+            if self._channel_map.get(ear) != idx:
+                self._channel_map[ear] = idx
+                changed = True
+        if not changed:
+            return
+        new_count = max(self._channel_map.values()) + 1
+        if new_count != self._channel_count:
+            self._channel_count = max(1, new_count)
+        self.shutdown_stream()
 
     def set_output_device(self, device_index: Optional[int]) -> None:
         idx = None
@@ -49,13 +143,14 @@ class AudioEngine:
             raise RuntimeError("sounddevice non disponibile: installa la dipendenza per riprodurre audio.")
         if self.profile is None:
             raise RuntimeError("Profilo di calibrazione non caricato.")
-        amplitude = self._level_to_amplitude(ear, freq_hz, level_db_hl)
+        ear_key = str(ear).strip().upper()
+        amplitude = self._level_to_amplitude(ear_key, freq_hz, level_db_hl)
         if amplitude <= 0.0:
             raise ValueError("Calibrazione assente per la frequenza selezionata.")
         self._ensure_stream()
         with self._lock:
             self._current_freq = float(freq_hz)
-            self._current_ear = ear
+            self._current_ear = ear_key
             self._target_gain = amplitude
             self._playing = True
             self.running = True
@@ -93,7 +188,7 @@ class AudioEngine:
             return
         kwargs = {
             'samplerate': int(self.sample_rate),
-            'channels': 2,
+            'channels': int(self._channel_count),
             'dtype': 'float32',
             'callback': self._callback,
             'blocksize': 256,
@@ -129,8 +224,11 @@ class AudioEngine:
             current_gain = float(gains[-1])
         else:
             gains = np.full(frames, current_gain, dtype=np.float32)
-        buffer = np.zeros((frames, 2), dtype=np.float32)
-        channel = 1 if ear == "OD" else 0
+        buffer = np.zeros((frames, int(self._channel_count)), dtype=np.float32)
+        channel = self._channel_map.get(ear)
+        if channel is None:
+            channel = self._channel_map.get("OD", 1 if self._channel_count > 1 else 0)
+        channel = max(0, min(channel, self._channel_count - 1))
         buffer[:, channel] = wave * gains
         outdata[:] = buffer
         phase = (phase + frames) % self.sample_rate

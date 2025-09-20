@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 from typing import Callable
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QMainWindow
@@ -11,7 +11,7 @@ class MenuBuilder:
     - CUFFIE: Seleziona dispositivo output (e trigger caricamento calibrazione)
     - ASSISTITO: Nuovo / Apri da locale
     - AUDIOMETRIA: Manuale (nuovo esame), Risultati
-    - EXPORT: PNG, PDF con Esito AI
+    - EXPORT: PNG, PDF
     """
 
     def __init__(self, win: QMainWindow) -> None:

@@ -1,4 +1,4 @@
-ï»¿ÃƒÂ¯Ã‚Â»Ã‚Â¿from __future__ import annotations
+from __future__ import annotations
 from typing import List, Dict, Any
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QListWidget, QListWidgetItem
 from PySide6.QtCore import Qt, Signal

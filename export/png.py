@@ -6,6 +6,6 @@ def export_graph_png(audiogram_view: Any, out_path: str) -> None:
     """
     Salva il grafico corrente come PNG su file.
     """
-    png_bytes = audiogram_view.export_png_bytes()
+    png_bytes = audiogram_view.export_png_bytes(hide_crosshair=True)
     with open(out_path, "wb") as handle:
         handle.write(png_bytes)
