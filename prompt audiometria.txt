@@ -1,0 +1,171 @@
+PROMPT PER CODEX/GPT — “AUDIOMETRIA” (USA PROFILI DI CALIBRAZIONE ESISTENTI)
+
+Obiettivo: completa un’app desktop Python (Windows 10/11) per eseguire audiometrie tonali manuali utilizzando cuffie già calibrate.
+All’avvio: selezione output audio → caricamento automatico calibrazione per WASAPI ID (se assente, file picker + copia in cartella locale).
+Gestione assistito (CLI o UI), audiometria manuale con grafico in tempo reale, storico risultati per paziente, export PNG e PDF A4 con Note e Esito AI via OpenAI (immagine audiogramma + età + note → testo descrittivo non diagnostico).
+
+Stack e linee guida
+
+Python 3.11+, PySide6, pyqtgraph, sounddevice (WASAPI esclusivo preferito; fallback PyAudio se necessario), numpy, reportlab, openai.
+
+Architettura MVC/MVVM. Mantieni la struttura cartelle sotto.
+
+Codice tipizzato, docstring concise, gestione errori chiara, messaggi utente in italiano.
+
+Sicurezza: STOP visibile, ESC ferma tutto, limiter su livelli (es. 100 dB HL eq.), avvisi su mismatch profilo/device.
+
+Struttura progetto (già creata; riempi gli stub)
+audiometria_app/
+  main.py
+  ui/
+    main_window.py        # crea GUI + layout 3 pannelli
+    menus.py              # costruisci barra menu e collega azioni
+    audiogram_view.py     # grafico audiogramma, export PNG bytes
+    status_panel.py       # stato/log
+    sidebar_controls.py   # controlli: orecchio, passo dB, pulsanti
+    dialogs.py            # nuovo/apri assistito, note, conferme
+  audio/
+    engine.py             # generazione tono, ramp, limiter, STOP
+    devices.py            # enumerazione output + WASAPI ID
+  calibration_loader/
+    profiles.py           # load/validate profilo, lookup per ID, copia locale
+  patient/
+    model.py              # dataclass Patient
+    repo.py               # persistenza assistiti locale
+  audiometry/
+    session.py            # stato esame, punti OD/OS, to_dict()
+    storage.py            # salva JSON esame in %APPDATA%/...
+  results/
+    browser.py            # lista/lettura esami per paziente
+  export/
+    png.py                # salva PNG da audiogram_view
+    pdf.py                # build_pdf_report_v3(...) PDF A4
+    ai_outcome.py         # integrazione OpenAI (immagine + età + note)
+  assets/
+  tests/
+    test_profiles.py
+    test_export_pdf.py
+
+Requisiti funzionali (implementa)
+
+Selezione cuffie + calibrazione
+
+Al primo avvio mostra dialogo Seleziona dispositivo output; elenca output con nome e WASAPI ID.
+
+Cerca profilo in %APPDATA%/Farmaudiometria/calibrations/<WASAPI_ID>/*.json.
+
+Se manca, apri file picker (json/yaml); valida schema, copia in cartella locale, associa all’ID.
+
+Se il device cambia (ID diverso), mostra avviso e blocca esame finché non carichi un profilo valido.
+
+Assistito (CLI + UI)
+
+CLI opzionale: --nome --cognome --eta --id; se assenti, UI: Nuovo assistito o Apri assistito locale.
+
+Salvataggio automatico dell’assistito in %APPDATA%/Farmaudiometria/patients/.
+
+Audiometria manuale
+
+Stesso paradigma del modulo calibrazione:
+tasti ←/→ freq, ↑/↓ dB HL (1/2/5 dB), SPAZIO play/stop, INVIO memorizza punto, TAB cambia orecchio, PgUp/PgDn tipo tono (se attivi), M mascheramento (opz.), ESC STOP.
+Qualsiasi tasto di controllo ferma prima il tono (safety).
+
+Grafico: X = [125,250,500,750,1000,1500,2000,3000,4000,6000,8000], Y = dB HL −10…120 (0 in alto).
+O rosso (OD), X blu (OS), griglia 10 dB (secondaria 5 dB), tooltips.
+Aggiornamento live dei punti.
+
+Audio: sine continuo con ramp 20–50 ms, buffer 128–256, mapping dB HL → dBFS tramite profilo; Limiter su soglia massima.
+
+FATTO: blocca controlli, mostra riepilogo; poi Salva o Scarta.
+
+Risultati
+
+Vista con lista di tutte le audiometrie dell’assistito (ordinate per data/ora).
+
+Click su un esame → grafico della curva; selezione multipla → overlay con colori diversi + legenda.
+
+Pulsanti: Salva (esame corrente in JSON), Esporta PNG (grafico visibile), Crea relazione PDF A4.
+
+Export
+
+PNG: salva l’immagine del grafico corrente (singolo o overlay).
+
+PDF A4: build_pdf_report_v3(out_pdf_path, patient, device, exam, notes, esito_ai, png_graph_path)
+Layout: intestazione (dati assistito e data), immagine grafico, box NOTE (testo libero), box ESITO AI (vedi punto 6).
+Usa ReportLab o libreria equivalente, font standard, margini A4.
+
+Esito AI (OpenAI + GPTs)
+
+Converte il grafico in PNG bytes; invia a OpenAI insieme a età e note; ricevi testo non diagnostico (descrittivo) e inseriscilo nel PDF.
+
+Variabili d’ambiente: OPENAI_API_KEY, AUDIOMETRIA_GPTS_ID (ID del tuo GPTs).
+
+Mostra disclaimer: uso didattico, non medico.
+
+Implementa gli stub (TODO principali)
+
+ui/menus.py: collega tutte le QAction ai metodi della MainWindow (apri calibrazione, salva esame, seleziona device, nuovo/apri assistito, nuovo esame, risultati, export PNG/PDF).
+
+ui/audiogram_view.py:
+
+Disegno punti/linee per OD/OS con simboli O/X e colori standard.
+
+Gestione aggiornamento live.
+
+Implementa export_png_bytes().
+
+audio/devices.py: enumerazione output con WASAPI ID e SR di default.
+
+audio/engine.py: play/stop tono, ramp, mapping dB HL→dBFS (leggi profilo), limiter, STOP immediato.
+
+calibration_loader/profiles.py: load_profile(), validazione schema, local_profile_path_for_device(), hash profilo.
+
+patient/repo.py: save/list; UI dialogs.py per nuovo/apri assistito.
+
+audiometry/session.py: aggiunta punti, to_dict(...).
+
+audiometry/storage.py: salvataggio JSON in %APPDATA%/Farmaudiometria/audiometries/<patient_id>/YYYY/MM/.
+
+results/browser.py: elenco esami per assistito; ordina per data; carica selezionati.
+
+export/png.py: salva su file usando audiogram_view.export_png_bytes().
+
+export/pdf.py: build_pdf_report_v3(...) con ReportLab (intestazione, immagine grafico, NOTE, ESITO AI).
+
+export/ai_outcome.py: funzione get_ai_outcome(png_bytes, eta, note, gpts_id=None) che usa OpenAI (Responses API) e ritorna una stringa.
+
+Menu e scorciatoie (vincoli)
+
+FILE: Apri calibrazione (Ctrl+O), Salva audiometria (Ctrl+S), Chiudi (Alt+F4)
+
+CUFFIE: Seleziona dispositivo output…
+
+ASSISTITO: Nuovo assistito…, Apri assistito locale…
+
+AUDIOMETRIA: Manuale (nuovo esame), Risultati
+
+EXPORT: Esporta PNG grafico…, Crea relazione PDF A4…
+
+Definizione di fatto (DoD)
+
+ Selezione device + caricamento/copia profilo per WASAPI ID con validazione schema.
+
+ UI completa, ridimensionabile; grafico con O/X, griglia 10/5 dB, overlay multi-curve.
+
+ Controlli tastiera (← → ↑ ↓ SPAZIO INVIO TAB + − PgUp PgDn M ESC) con safety stop.
+
+ Audio engine con ramp, limiter, mapping dB HL→dBFS da profilo.
+
+ Persistenza assistiti e esami in %APPDATA%/Farmaudiometria/....
+
+ Salva esame (JSON), Export PNG, PDF A4 con Note + Esito AI.
+
+ Logging essenziale; messaggi di errore/localizzazione in italiano.
+
+ Build PyInstaller (exe singolo) e requirements.txt aggiornato.
+
+Avvio locale (dev)
+
+pip install -r requirements.txt
+
+python main.py --nome "Mario" --cognome "Rossi" --eta 55 --id "PZ001"
