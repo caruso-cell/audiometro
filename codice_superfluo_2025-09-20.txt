@@ -1,0 +1,32 @@
+=== Codice potenzialmente superfluo / da pulire (20-09-2025) ===
+
+1. Cartella archive/ (ai_outcome.py, api_keys.py, prompt legacy)
+   - Nessun modulo del progetto importa `archive.*`; funzionalità AI disattivate nella UI.
+   - Contiene ancora credenziali OpenAI reali (`api_keys.py`), rischio di esposizione se rimane nel repo.
+   - Suggerimento: rimuovere l'intera cartella o spostarla fuori dal versionamento dopo aver bonificato le chiavi.
+
+2. File pdf.py nella root
+   - Versione alternativa di `build_pdf_report_v3` basata su Matplotlib.
+   - Non è importato da nessuna parte; mancano anche gli import (`Dict`, `Any`, `os`, `matplotlib`).
+   - Probabile residuo pre-rifattorizzazione ? può essere eliminato o archiviato fuori dal codice sorgente.
+
+3. Modulo export/pdf.py
+   - La firma richiede `esito_ai` e `ai_prompt`, ma questi parametri non vengono utilizzati dentro la funzione.
+   - Nell'app vengono passati stringhe vuote: conviene rimuovere i parametri e il codice correlato se l’analisi AI è stata abbandonata.
+
+4. Canale aggiuntivo in TonePlayer
+   - `audiometer/audio/playback.TonePlayer.set_channel_map()` non viene richiamato da nessuna parte.
+   - Se il routing cuffie è gestito solo da `AudioEngine`, questo metodo può essere eliminato oppure va effettivamente agganciato in `AppController`.
+
+5. Pacchetto audiometer_integration/
+   - Contiene entrypoint headless (`main.py`, `screening.py`) ma non esistono import o riferimenti dall’app principale.
+   - Valutare se serve ancora (es. pipeline esterne). In caso contrario, rimuoverlo o spostarlo in repo separato per alleggerire il codice mantenuto.
+
+6. Asset e file dimostrativi
+   - `aa.pdf`, `as.png`, `lino_pino_33.pdf` nella root/dist sembrano output di test manuali; tenerli fuori dal repo git o in cartella `samples/` ignorata.
+   - `prompt audiometria.txt` potrebbe essere spostato nella documentazione se non più usato dal runtime.
+
+7. Configurazioni sonore
+   - Verificare se `DATA/*.json` duplicano calibrature non più utilizzate. Molti profili includono mapping DBFS legacy; rimuovere quelli obsoleti evita confusione.
+
+Nessuna modifica applicata: questo file elenca solo i punti da valutare assieme prima di eventuali pulizie.
