@@ -30,7 +30,6 @@ from ui.sidebar_controls import SidebarControls
 from ui.dialogs import NewPatientDialog, OpenPatientDialog
 from ui.status_panel import HistoryPanel
 from ui.log_panel import LogPanel
-from ui.results_dialog import ResultsDialog
 from audio.engine import AudioEngine
 from audio.devices import list_output_devices
 from calibration_loader.profiles import (
@@ -86,6 +85,9 @@ class MainWindow(QMainWindow):
         self._tone_timeout.timeout.connect(self.stop_audio)
 
         self._last_export_dir = os.getcwd()
+        self._preview_cached_points: dict[str, dict[int, float]] | None = None
+        self._preview_active = False
+        self._history_selected_exam: dict[str, Any] | None = None
 
         self._builder = MenuBuilder(self)
         self._builder.build()
@@ -155,8 +157,8 @@ class MainWindow(QMainWindow):
         self.sidebar.maskingToggled.connect(self._on_masking_toggled)
         self.sidebar.notesChanged.connect(self._on_notes_changed)
 
-        self.history_panel.examActivated.connect(self.show_results_browser)
         self.history_panel.selectionChanged.connect(self._on_history_selection_changed)
+        self.history_panel.exportPngRequested.connect(self.export_graph_png)\n        self.history_panel.exportPdfRequested.connect(self.create_pdf_report)
 
         # Status bar
         self._status_patient_label = QLabel("Assistito: -")
@@ -280,15 +282,21 @@ class MainWindow(QMainWindow):
     def _has_recorded_points(self) -> bool:
         return bool(self.session.points_od or self.session.points_os)
 
-    def _build_results_table(self) -> str:
+    def _build_results_table(self, od_map: dict[int, float] | None = None, os_map: dict[int, float] | None = None, freqs: list[int] | None = None) -> str:
         col_w = 6
-        freq_cells = [f"{freq:>{col_w}}" for freq in self._freqs]
-        def _fmt(val):
-            if val is None:
+        freq_list = freqs or self._freqs
+        freq_cells = [f"{freq:>{col_w}}" for freq in freq_list]
+
+        def _fmt(mapping: dict[int, float] | None, freq: int) -> str:
+            if not mapping or freq not in mapping:
                 return f"{'-':>{col_w}}"
-            return f"{int(round(val)):>{col_w}}"
-        od_cells = [_fmt(self.session.points_od.get(freq)) for freq in self._freqs]
-        os_cells = [_fmt(self.session.points_os.get(freq)) for freq in self._freqs]
+            return f"{int(round(mapping[freq])):>{col_w}}"
+
+        od_source = od_map or self.session.points_od
+        os_source = os_map or self.session.points_os
+        od_cells = [_fmt(od_source, freq) for freq in freq_list]
+        os_cells = [_fmt(os_source, freq) for freq in freq_list]
+
         label_w = 14
         line_freq = f"{'Freq (Hz)':>{label_w}}: " + ' '.join(freq_cells)
         line_od = f"{'OD (dB HL) dx':>{label_w}}: " + ' '.join(od_cells)
@@ -325,16 +333,20 @@ class MainWindow(QMainWindow):
             history = list_patient_exams(self._appdata, str(self.current_patient.get('id', '')))
         except Exception:
             history = []
+        history_exam = self._history_selected_exam
         snapshot = {
             'generated_at': datetime.now().isoformat(),
             'patient': self.current_patient,
             'device': self.current_device,
             'headphone_id': self.controller.get_headphone_id(),
-            'notes': self.session.notes,
+            'notes': (history_exam.get('data', {}).get('notes', '') if history_exam else self.session.notes),
             'current_exam': exam,
             'results_rows': rows,
             'saved_exams': history,
         }
+        if history_exam:
+            snapshot['selected_exam'] = history_exam.get('data')
+            snapshot['selected_exam_path'] = history_exam.get('meta', {}).get('path')
         json_path = f"{base_path_without_ext}.json"
         try:
             with open(json_path, 'w', encoding='utf-8') as handle:
@@ -544,6 +556,8 @@ class MainWindow(QMainWindow):
         if not self.current_profile:
             QMessageBox.warning(self, "Profilo mancante", "Carica un profilo di calibrazione valido.")
             return
+        self.history_panel.list_widget.clearSelection()
+        self._clear_history_preview()
         self.audio_engine.stop()
         self.session = AudiometrySession()
         self.session.notes = ''
@@ -560,18 +574,74 @@ class MainWindow(QMainWindow):
         self.set_status("Esame manuale avviato. Registra i punti con i controlli dedicati.")
 
     def _on_history_selection_changed(self, exams: List[Dict[str, Any]]) -> None:
-        self.graph.set_overlays(exams)
+        if not exams:
+            self._history_selected_exam = None
+            self.history_panel.set_details('')
+            self.graph.set_overlays([])
+            if self._preview_active:
+                self._preview_active = False
+                self._preview_cached_points = None
+                self._refresh_graph()
+            return
+
+        exam_meta = exams[0]
+        path = exam_meta.get('path')
+        if not path:
+            self.history_panel.set_details('')
+            return
+        try:
+            with open(path, 'r', encoding='utf-8') as handle:
+                data = json.load(handle)
+        except Exception as exc:
+            QMessageBox.warning(self, "Risultati", f"Impossibile leggere l'esame:
+{exc}")
+            return
+
+        try:
+            freqs = [int(f) for f in data.get('frequencies_hz', self._freqs)]
+        except Exception:
+            freqs = self._freqs
+        od_map = {int(k): float(v) for k, v in (data.get('OD') or {}).items() if str(k).isdigit()}
+        os_map = {int(k): float(v) for k, v in (data.get('OS') or {}).items() if str(k).isdigit()}
+
+        self.history_panel.set_details(data.get('notes', ''))
+        self._history_selected_exam = {
+            'meta': exam_meta,
+            'data': data,
+            'od': od_map,
+            'os': os_map,
+            'freqs': freqs,
+        }
+        self._show_history_exam_on_graph(od_map, os_map)
+
+    def _show_history_exam_on_graph(self, od_map: Dict[int, float], os_map: Dict[int, float]) -> None:
+        if not self._preview_active:
+            self._preview_active = True
+            self._preview_cached_points = {
+                'OD': dict(self.session.points_od),
+                'OS': dict(self.session.points_os),
+            }
+        self.graph.set_overlays([])
+        self.graph.update_points('OD', od_map)
+        self.graph.update_points('OS', os_map)
+
+    def _clear_history_preview(self) -> None:
+        if self._preview_active:
+            self._preview_active = False
+            self._preview_cached_points = None
+            self._refresh_graph()
 
     def show_results_browser(self) -> None:
         if not self.current_patient:
-            QMessageBox.information(self, "Assistito mancante", "Nessun assistito selezionato.")
+            QMessageBox.information(self, 'Assistito mancante', 'Nessun assistito selezionato.')
             return
-        exams = list_patient_exams(self._appdata, str(self.current_patient['id']))
-        if not exams:
-            QMessageBox.information(self, "Risultati", "Nessuna audiometria salvata per questo assistito.")
+        self._refresh_exam_history()
+        if self.history_panel.list_widget.count() == 0:
+            QMessageBox.information(self, 'Risultati', 'Nessuna audiometria salvata per questo assistito.')
             return
-        dialog = ResultsDialog(self._appdata, self.current_patient, self, exams=exams)
-        dialog.exec()
+        self.history_panel.list_widget.setFocus()
+        if not self.history_panel.list_widget.selectedItems():
+            self.history_panel.list_widget.setCurrentRow(0)
 
     def export_graph_png(self) -> None:
         if not self.current_patient:
@@ -594,31 +664,45 @@ class MainWindow(QMainWindow):
         self.set_status(f"PNG salvato in: {out_path}")
 
     def create_pdf_report(self) -> None:
+        history_exam = self._history_selected_exam
         if not _REPORTLAB_AVAILABLE:
-            QMessageBox.warning(self, "ReportLab mancante", "Installa reportlab per generare il PDF.")
+            QMessageBox.warning(self, 'ReportLab mancante', 'Installa reportlab per generare il PDF.')
             return
-        if not self.current_patient or not self.current_device or not self.current_profile:
-            QMessageBox.warning(self, "Dati mancanti", "Serve assistito, dispositivo e profilo attivi.")
-            return
-        exam = self.session.to_dict(self.current_patient, self.current_device, self.current_profile)
-
-        suggested = self._suggest_export_path('.pdf')
-        out_pdf, _ = QFileDialog.getSaveFileName(self, "Crea relazione PDF", suggested, "PDF (*.pdf)")
+        if history_exam is None:
+            if not self.current_patient or not self.current_device or not self.current_profile:
+                QMessageBox.warning(self, 'Dati mancanti', 'Serve assistito, dispositivo e profilo attivi.')
+                return
+            exam_dict = self.session.to_dict(self.current_patient, self.current_device, self.current_profile)
+            patient_info = self.current_patient
+            device_info = self.current_device
+            notes = self.session.notes
+            od_map = None
+            os_map = None
+            freqs = exam_dict.get('frequencies_hz', self._freqs)
+        else:
+            exam_dict = history_exam.get('data', {})
+            patient_info = exam_dict.get('patient') or self.current_patient or {}
+            device_info = exam_dict.get('device') or self.current_device or {}
+            notes = exam_dict.get('notes', '')
+            od_map = history_exam.get('od')
+            os_map = history_exam.get('os')
+            freqs = history_exam.get('freqs', self._freqs)
+        suggested = self._suggest_export_path(".pdf")
+        out_pdf, _ = QFileDialog.getSaveFileName(self, 'Crea relazione PDF', suggested, 'PDF (*.pdf)')
         if not out_pdf:
             return
         self._last_export_dir = os.path.dirname(out_pdf) or self._last_export_dir
-
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
             tmp_path = tmp.name
         try:
             export_graph_png(self.graph, tmp_path)
-            table_text = self._build_results_table()
+            table_text = self._build_results_table(od_map, os_map, freqs)
             build_pdf_report_v3(
                 out_pdf,
-                self.current_patient,
-                self.current_device,
-                exam,
-                self.session.notes,
+                patient_info,
+                device_info,
+                exam_dict,
+                notes,
                 '',
                 tmp_path,
                 table_text,
@@ -626,14 +710,12 @@ class MainWindow(QMainWindow):
             )
             base_no_ext, _ = os.path.splitext(out_pdf)
             self._write_exam_snapshot(base_no_ext)
-            self.set_status(f"Relazione PDF creata in: {out_pdf}")
+            self.set_status(f'Relazione PDF creata in: {out_pdf}')
         finally:
             try:
                 os.remove(tmp_path)
             except OSError:
                 pass
-
-    # ----- Assistito/device management -----
 
     def _activate_patient(self, patient: Dict[str, Any], persist: bool = True) -> None:
         self.current_patient = patient
@@ -813,6 +895,8 @@ class MainWindow(QMainWindow):
             event.accept()
             return
         super().keyPressEvent(event)
+
+
 
 
 
