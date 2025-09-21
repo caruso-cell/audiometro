@@ -158,7 +158,8 @@ class MainWindow(QMainWindow):
         self.sidebar.notesChanged.connect(self._on_notes_changed)
 
         self.history_panel.selectionChanged.connect(self._on_history_selection_changed)
-        self.history_panel.exportPngRequested.connect(self.export_graph_png)\n        self.history_panel.exportPdfRequested.connect(self.create_pdf_report)
+        self.history_panel.exportPngRequested.connect(self._on_history_export_png)
+        self.history_panel.exportPdfRequested.connect(self._on_history_export_pdf)
 
         # Status bar
         self._status_patient_label = QLabel("Assistito: -")
@@ -578,10 +579,7 @@ class MainWindow(QMainWindow):
             self._history_selected_exam = None
             self.history_panel.set_details('')
             self.graph.set_overlays([])
-            if self._preview_active:
-                self._preview_active = False
-                self._preview_cached_points = None
-                self._refresh_graph()
+            self._clear_history_preview()
             return
 
         exam_meta = exams[0]
@@ -593,8 +591,7 @@ class MainWindow(QMainWindow):
             with open(path, 'r', encoding='utf-8') as handle:
                 data = json.load(handle)
         except Exception as exc:
-            QMessageBox.warning(self, "Risultati", f"Impossibile leggere l'esame:
-{exc}")
+            QMessageBox.warning(self, 'Risultati', f"Impossibile leggere l'esame: {exc}")
             return
 
         try:
@@ -613,6 +610,8 @@ class MainWindow(QMainWindow):
             'freqs': freqs,
         }
         self._show_history_exam_on_graph(od_map, os_map)
+        self._show_graph(True)
+        self._show_controls(False)
 
     def _show_history_exam_on_graph(self, od_map: Dict[int, float], os_map: Dict[int, float]) -> None:
         if not self._preview_active:
@@ -631,6 +630,18 @@ class MainWindow(QMainWindow):
             self._preview_cached_points = None
             self._refresh_graph()
 
+    def _on_history_export_png(self) -> None:
+        if not self._history_selected_exam:
+            QMessageBox.information(self, 'Risultati', "Seleziona un esame dall'elenco.")
+            return
+        self.export_graph_png()
+
+    def _on_history_export_pdf(self) -> None:
+        if not self._history_selected_exam:
+            QMessageBox.information(self, 'Risultati', "Seleziona un esame dall'elenco.")
+            return
+        self.create_pdf_report()
+
     def show_results_browser(self) -> None:
         if not self.current_patient:
             QMessageBox.information(self, 'Assistito mancante', 'Nessun assistito selezionato.')
@@ -644,24 +655,25 @@ class MainWindow(QMainWindow):
             self.history_panel.list_widget.setCurrentRow(0)
 
     def export_graph_png(self) -> None:
-        if not self.current_patient:
-            QMessageBox.warning(self, "Assistito mancante", "Nessun assistito selezionato.")
+        history_exam = self._history_selected_exam if self._history_selected_exam else None
+        patient_info = history_exam.get('data', {}).get('patient') if history_exam else self.current_patient
+        if not patient_info:
+            QMessageBox.warning(self, 'Assistito mancante', 'Nessun assistito selezionato.')
             return
         suggested = self._suggest_export_path('.png')
         out_path, _ = QFileDialog.getSaveFileName(
             self,
-            "Esporta grafico PNG",
+            'Esporta grafico PNG',
             suggested,
-            "Immagine PNG (*.png)",
+            'Immagine PNG (*.png)',
         )
         if not out_path:
             return
         self._last_export_dir = os.path.dirname(out_path) or self._last_export_dir
         export_graph_png(self.graph, out_path)
-        if self.current_patient:
-            base_no_ext, _ = os.path.splitext(out_path)
-            self._write_exam_snapshot(base_no_ext)
-        self.set_status(f"PNG salvato in: {out_path}")
+        base_no_ext, _ = os.path.splitext(out_path)
+        self._write_exam_snapshot(base_no_ext)
+        self.set_status(f'PNG salvato in: {out_path}')
 
     def create_pdf_report(self) -> None:
         history_exam = self._history_selected_exam
@@ -687,12 +699,12 @@ class MainWindow(QMainWindow):
             od_map = history_exam.get('od')
             os_map = history_exam.get('os')
             freqs = history_exam.get('freqs', self._freqs)
-        suggested = self._suggest_export_path(".pdf")
+        suggested = self._suggest_export_path('.pdf')
         out_pdf, _ = QFileDialog.getSaveFileName(self, 'Crea relazione PDF', suggested, 'PDF (*.pdf)')
         if not out_pdf:
             return
         self._last_export_dir = os.path.dirname(out_pdf) or self._last_export_dir
-        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+        with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
             tmp_path = tmp.name
         try:
             export_graph_png(self.graph, tmp_path)
@@ -716,6 +728,7 @@ class MainWindow(QMainWindow):
                 os.remove(tmp_path)
             except OSError:
                 pass
+
 
     def _activate_patient(self, patient: Dict[str, Any], persist: bool = True) -> None:
         self.current_patient = patient
