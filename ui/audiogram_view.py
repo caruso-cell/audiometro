@@ -5,6 +5,9 @@ from PySide6.QtCore import QBuffer, QIODevice, Qt
 from PySide6.QtGui import QColor, QBrush
 from PySide6 import QtWidgets
 import pyqtgraph as pg
+from pyqtgraph.exporters import ImageExporter
+import tempfile
+import os
 
 FREQS = [125, 250, 500, 750, 1000, 1500, 2000, 3000, 4000, 6000, 8000]
 FREQ_POS = {freq: idx for idx, freq in enumerate(FREQS)}
@@ -183,7 +186,7 @@ class AudiogramView(QWidget):
                     self.legend.addItem(line, legend_label)
                 self._overlay_items.append(line)
 
-    def export_png_bytes(self, hide_crosshair: bool = False) -> bytes:
+    def save_png(self, out_path: str, hide_crosshair: bool = False, width: int | None = None) -> None:
         to_restore = []
         if hide_crosshair:
             for line in (self.hline, self.vline):
@@ -192,11 +195,27 @@ class AudiogramView(QWidget):
                     line.setVisible(False)
         try:
             QApplication.processEvents()
-            pixmap = self.plot.grab()
-            buffer = QBuffer()
-            buffer.open(QIODevice.WriteOnly)
-            pixmap.save(buffer, 'PNG')
-            return bytes(buffer.data())
+            exporter = ImageExporter(self.plot.plotItem)
+            if width is None:
+                width = int(max(1, self.plot.width()))
+            exporter.parameters()['width'] = width
+            exporter.export(out_path)
         finally:
             for line, visible in to_restore:
                 line.setVisible(visible)
+
+    def export_png_bytes(self, hide_crosshair: bool = False) -> bytes:
+        tmp_path = None
+        try:
+            tmp = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
+            tmp_path = tmp.name
+            tmp.close()
+            self.save_png(tmp_path, hide_crosshair=hide_crosshair)
+            with open(tmp_path, 'rb') as handle:
+                return handle.read()
+        finally:
+            if tmp_path:
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass

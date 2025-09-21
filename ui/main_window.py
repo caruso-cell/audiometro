@@ -1,9 +1,12 @@
 from __future__ import annotations
 from typing import Optional, Dict, Any, List
 import os
+import json
+import re
 import shutil
 import tempfile
 import sys
+from datetime import datetime
 
 from PySide6.QtWidgets import (
     QMainWindow,
@@ -81,6 +84,8 @@ class MainWindow(QMainWindow):
         self._tone_timeout = QTimer(self)
         self._tone_timeout.setSingleShot(True)
         self._tone_timeout.timeout.connect(self.stop_audio)
+
+        self._last_export_dir = os.getcwd()
 
         self._builder = MenuBuilder(self)
         self._builder.build()
@@ -289,6 +294,54 @@ class MainWindow(QMainWindow):
         line_od = f"{'OD (dB HL) dx':>{label_w}}: " + ' '.join(od_cells)
         line_os = f"{'OS (dB HL) sx':>{label_w}}: " + ' '.join(os_cells)
         return "\n".join([line_freq, line_od, line_os])
+
+    def _export_base_filename(self) -> str:
+        patient = self.current_patient or {}
+        pieces = [str(patient.get('cognome', '')).strip(), str(patient.get('nome', '')).strip(), str(patient.get('id', '')).strip()]
+        base = '_'.join([p for p in pieces if p])
+        base = re.sub(r'[^A-Za-z0-9_-]+', '_', base).strip('_')
+        if not base:
+            base = 'audiometria'
+        return base
+
+    def _suggest_export_path(self, extension: str) -> str:
+        directory = self._last_export_dir or os.getcwd()
+        base = self._export_base_filename()
+        return os.path.join(directory, f"{base}{extension}")
+
+    def _write_exam_snapshot(self, base_path_without_ext: str) -> None:
+        if not self.current_patient:
+            return
+        try:
+            os.makedirs(os.path.dirname(base_path_without_ext) or '.', exist_ok=True)
+            exam = self.session.to_dict(self.current_patient, self.current_device, self.current_profile)
+        except Exception:
+            exam = {}
+        try:
+            rows = self.controller.get_results_rows()
+        except Exception:
+            rows = []
+        try:
+            history = list_patient_exams(self._appdata, str(self.current_patient.get('id', '')))
+        except Exception:
+            history = []
+        snapshot = {
+            'generated_at': datetime.now().isoformat(),
+            'patient': self.current_patient,
+            'device': self.current_device,
+            'headphone_id': self.controller.get_headphone_id(),
+            'notes': self.session.notes,
+            'current_exam': exam,
+            'results_rows': rows,
+            'saved_exams': history,
+        }
+        json_path = f"{base_path_without_ext}.json"
+        try:
+            with open(json_path, 'w', encoding='utf-8') as handle:
+                json.dump(snapshot, handle, ensure_ascii=False, indent=2)
+        except Exception as exc:
+            if hasattr(self, '_logger'):
+                self._logger.warning('Impossibile salvare snapshot esame: %s', exc)
 
     def _apply_state_to_controls(self) -> None:
         freq = self._freqs[self._current_freq_index]
@@ -524,15 +577,20 @@ class MainWindow(QMainWindow):
         if not self.current_patient:
             QMessageBox.warning(self, "Assistito mancante", "Nessun assistito selezionato.")
             return
+        suggested = self._suggest_export_path('.png')
         out_path, _ = QFileDialog.getSaveFileName(
             self,
             "Esporta grafico PNG",
-            "",
+            suggested,
             "Immagine PNG (*.png)",
         )
         if not out_path:
             return
+        self._last_export_dir = os.path.dirname(out_path) or self._last_export_dir
         export_graph_png(self.graph, out_path)
+        if self.current_patient:
+            base_no_ext, _ = os.path.splitext(out_path)
+            self._write_exam_snapshot(base_no_ext)
         self.set_status(f"PNG salvato in: {out_path}")
 
     def create_pdf_report(self) -> None:
@@ -544,13 +602,11 @@ class MainWindow(QMainWindow):
             return
         exam = self.session.to_dict(self.current_patient, self.current_device, self.current_profile)
 
-        name_parts = [self.current_patient.get('cognome', ''), self.current_patient.get('nome', ''), str(self.current_patient.get('id', ''))]
-        default_name = '_'.join(filter(None, name_parts)) or 'audiometria'
-        default_name = default_name.replace(' ', '_') + '.pdf'
-        default_path = os.path.join(os.getcwd(), default_name)
-        out_pdf, _ = QFileDialog.getSaveFileName(self, "Crea relazione PDF", default_path, "PDF (*.pdf)")
+        suggested = self._suggest_export_path('.pdf')
+        out_pdf, _ = QFileDialog.getSaveFileName(self, "Crea relazione PDF", suggested, "PDF (*.pdf)")
         if not out_pdf:
             return
+        self._last_export_dir = os.path.dirname(out_pdf) or self._last_export_dir
 
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
             tmp_path = tmp.name
@@ -568,6 +624,8 @@ class MainWindow(QMainWindow):
                 table_text,
                 '',
             )
+            base_no_ext, _ = os.path.splitext(out_pdf)
+            self._write_exam_snapshot(base_no_ext)
             self.set_status(f"Relazione PDF creata in: {out_pdf}")
         finally:
             try:
