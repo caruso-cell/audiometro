@@ -9,11 +9,35 @@ from PySide6.QtWidgets import (
     QLabel,
     QTextEdit,
     QHBoxLayout,
+    QScrollArea,
 )
 from PySide6.QtCore import Signal
 
 FREQ_OPTIONS = [125, 250, 500, 750, 1000, 1500, 2000, 3000, 4000, 6000, 8000]
 STEP_OPTIONS = [1, 2, 5]
+
+ENVIRONMENT_OPTIONS = [
+    {'code': 1, 'label': 'Casa in silenzio'},
+    {'code': 2, 'label': 'Casa con televisione o radio accese'},
+    {'code': 3, 'label': 'Conversazioni familiari in salotto o cucina'},
+    {'code': 4, 'label': 'Ristorante / bar / caffetteria'},
+    {'code': 5, 'label': 'Riunioni di lavoro o di condominio'},
+    {'code': 6, 'label': 'Cene con amici o familiari numerosi'},
+    {'code': 7, 'label': 'Feste o ricevimenti'},
+    {'code': 8, 'label': 'Automobile'},
+    {'code': 9, 'label': 'Autobus / treno'},
+    {'code': 10, 'label': 'Aereo'},
+    {'code': 11, 'label': 'Chiesa / luogo di culto'},
+    {'code': 12, 'label': 'Cinema / teatro'},
+    {'code': 13, 'label': 'Concerti / ascolto di musica'},
+    {'code': 14, 'label': 'Eventi sportivi (palazzetti, stadi)'},
+    {'code': 15, 'label': 'Passeggiate all\'aperto (parco, montagna, mare)'},
+    {'code': 16, 'label': 'Traffico cittadino (strada, incroci, piazze affollate)'},
+    {'code': 17, 'label': 'Mercati o centri commerciali'},
+    {'code': 18, 'label': 'Ufficio (colleghi, telefoni, PC)'},
+    {'code': 19, 'label': 'Scuola / aula universitaria'},
+    {'code': 20, 'label': 'Fabbrica / officina (macchinari, rumori continui)'},
+]
 
 
 class SidebarControls(QWidget):
@@ -28,6 +52,7 @@ class SidebarControls(QWidget):
     storeRequested = Signal()
     maskingToggled = Signal(bool)
     notesChanged = Signal(str)
+    environmentsChanged = Signal(list)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -96,6 +121,25 @@ class SidebarControls(QWidget):
         self.txt_notes.textChanged.connect(self._emit_notes)
         layout.addWidget(self.txt_notes)
 
+        layout.addWidget(QLabel('Ambienti di ascolto'))
+        self._block_environment_signal = False
+        self._environment_checks = []
+        env_host = QWidget()
+        env_layout = QVBoxLayout(env_host)
+        env_layout.setContentsMargins(0, 0, 0, 0)
+        env_layout.setSpacing(4)
+        for entry in ENVIRONMENT_OPTIONS:
+            checkbox = QCheckBox(f"{entry['code']}. {entry['label']}")
+            checkbox.stateChanged.connect(self._emit_environments)
+            self._environment_checks.append((entry, checkbox))
+            env_layout.addWidget(checkbox)
+        env_layout.addStretch()
+        env_scroll = QScrollArea()
+        env_scroll.setWidgetResizable(True)
+        env_scroll.setWidget(env_host)
+        env_scroll.setFixedHeight(240)
+        layout.addWidget(env_scroll)
+
         layout.addStretch()
 
     # --- Emitters ---
@@ -118,6 +162,15 @@ class SidebarControls(QWidget):
 
     def _emit_notes(self) -> None:
         self.notesChanged.emit(self.notes())
+
+    def _emit_environments(self) -> None:
+        if self._block_environment_signal:
+            return
+        selected = []
+        for entry, checkbox in self._environment_checks:
+            if checkbox.isChecked():
+                selected.append({'code': entry['code'], 'description': entry['label']})
+        self.environmentsChanged.emit(selected)
 
     # --- Accessors ---
 
@@ -171,3 +224,36 @@ class SidebarControls(QWidget):
         self.txt_notes.blockSignals(True)
         self.txt_notes.setPlainText(text)
         self.txt_notes.blockSignals(False)
+
+    def environments(self) -> list:
+        selected = []
+        for entry, checkbox in self._environment_checks:
+            if checkbox.isChecked():
+                selected.append({'code': entry['code'], 'description': entry['label']})
+        return selected
+
+    def set_environments(self, selections) -> None:
+        codes = set()
+        if selections is None:
+            selections = []
+        for item in selections:
+            code = None
+            if isinstance(item, dict):
+                code = item.get('code')
+            else:
+                try:
+                    code = int(item)
+                except (TypeError, ValueError):
+                    code = None
+            if code is not None:
+                try:
+                    codes.add(int(code))
+                except (TypeError, ValueError):
+                    continue
+        self._block_environment_signal = True
+        for entry, checkbox in self._environment_checks:
+            checkbox.blockSignals(True)
+            checkbox.setChecked(entry['code'] in codes)
+            checkbox.blockSignals(False)
+        self._emit_environments()
+        self._block_environment_signal = False

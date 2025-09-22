@@ -57,7 +57,7 @@ class MainWindow(QMainWindow):
     def __init__(self, parent: Optional[QWidget] = None, cli_patient: Optional[Dict[str, Any]] = None) -> None:
         super().__init__(parent)
         self._brand_colors = self._load_brand_colors()
-        self.setWindowTitle("Audiometria 1.8")
+        self.setWindowTitle("Audiometria 1.9")
         icon_path = resource_path('assets/app.ico')
         if not os.path.exists(icon_path):
             icon_path = resource_path('data/icona.png')
@@ -67,6 +67,8 @@ class MainWindow(QMainWindow):
         self._appdata = os.getenv("APPDATA") or os.path.expanduser("~")
         self._settings = load_settings(self._appdata)
         self._cli_patient = cli_patient
+        if self._cli_patient is not None:
+            self._cli_patient.setdefault('ambienti', [])
         self._cli_patient_lock = bool(cli_patient)
 
         self.patient_repo = PatientRepo(self._appdata)
@@ -184,6 +186,7 @@ class MainWindow(QMainWindow):
         self.sidebar.stepChanged.connect(self._on_step_changed)
         self.sidebar.maskingToggled.connect(self._on_masking_toggled)
         self.sidebar.notesChanged.connect(self._on_notes_changed)
+        self.sidebar.environmentsChanged.connect(self._on_environments_changed)
 
         self.history_panel.selectionChanged.connect(self._on_history_selection_changed)
         self.history_panel.exportPngRequested.connect(self._on_history_export_png)
@@ -791,6 +794,74 @@ class MainWindow(QMainWindow):
         self._write_exam_snapshot(base_no_ext)
         self.set_status(f'PNG salvato in: {out_path}')
 
+
+    def export_noah_xml(self) -> None:
+        if not self.current_patient:
+            QMessageBox.warning(self, "Assistito mancante", "Seleziona un assistito prima di esportare.")
+            return
+        self.set_status('Esportazione NOAH: preparazione audiometrie...')
+        exams = list_patient_exams(self._appdata, str(self.current_patient.get('id', '')))
+        suggested = self._suggest_export_path('.xml')
+        out_path, _ = QFileDialog.getSaveFileName(
+            self,
+            'Esporta audiometrie (NOAH XML)',
+            suggested,
+            'Noah XML (*.xml)')
+        if not out_path:
+            self.set_status('Esportazione NOAH annullata.')
+            return
+        exam_paths = [entry.get('path') for entry in exams if entry.get('path')]
+        temp_paths: list[str] = []
+        try:
+            history_exam = self._history_selected_exam
+            if history_exam and not history_exam.get('meta', {}).get('path'):
+                data = history_exam.get('data')
+                if data:
+                    tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.json', prefix='noah_', dir=os.getcwd())
+                    temp_paths.append(tmp.name)
+                    tmp.close()
+                    with open(temp_paths[-1], 'w', encoding='utf-8') as handle:
+                        json.dump(data, handle, ensure_ascii=False, indent=2)
+                    exam_paths.append(temp_paths[-1])
+            if not exam_paths:
+                if not self._has_recorded_points():
+                    QMessageBox.information(self, 'Esportazione NOAH', 'Nessuna audiometria salvata o in corso per questo assistito.')
+                    self.set_status('Esportazione NOAH annullata: nessun dato disponibile.')
+                    return
+                if not (self.current_device and self.current_profile):
+                    QMessageBox.warning(self, 'Esportazione NOAH', 'Completa un esame e salva prima di esportare il formato NOAH.')
+                    self.set_status('Esportazione NOAH annullata: dati incompleti.')
+                    return
+                try:
+                    session_dict = self.session.to_dict(self.current_patient, self.current_device, self.current_profile)
+                except Exception as exc:
+                    QMessageBox.warning(self, 'Esportazione NOAH', f"Impossibile preparare l'esame corrente: {exc}")
+                    self.set_status(f'Esportazione NOAH annullata: {exc}')
+                    return
+                tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.json', prefix='noah_', dir=os.getcwd())
+                temp_paths.append(tmp.name)
+                tmp.close()
+                with open(temp_paths[-1], 'w', encoding='utf-8') as handle:
+                    json.dump(session_dict, handle, ensure_ascii=False, indent=2)
+                exam_paths.append(temp_paths[-1])
+            self.set_status(f"Esportazione NOAH: trovate {len(exam_paths)} audiometrie.")
+            self._last_export_dir = os.path.dirname(out_path) or self._last_export_dir
+            export_noah_package(self.current_patient, exam_paths, out_path)
+        except NoahExportError as exc:
+            QMessageBox.warning(self, 'Esportazione NOAH', str(exc))
+            self.set_status(f'Esportazione NOAH fallita: {exc}')
+            return
+        except Exception as exc:
+            QMessageBox.warning(self, 'Esportazione NOAH', f"Errore inaspettato: {exc}")
+            self.set_status(f'Esportazione NOAH fallita: {exc}')
+            return
+        finally:
+            for tmp_path in temp_paths:
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass
+        self.set_status(f'NOAH XML salvato in: {out_path}')
     def create_pdf_report(self) -> None:
         history_exam = self._history_selected_exam
         if not _REPORTLAB_AVAILABLE:
@@ -848,6 +919,7 @@ class MainWindow(QMainWindow):
 
     def _activate_patient(self, patient: Dict[str, Any], persist: bool = True) -> None:
         self.current_patient = patient
+        patient.setdefault('ambienti', [])
         if persist:
             self.patient_repo.save(patient)
         self.audio_engine.stop()
@@ -859,6 +931,7 @@ class MainWindow(QMainWindow):
         self._apply_state_to_controls()
         self._refresh_graph()
         self.sidebar.set_notes(self.session.notes)
+        self.sidebar.set_environments(patient.get('ambienti', []))
         self._show_controls(False)
         self._show_graph(False)
         self._set_exam_controls_enabled(False)
@@ -965,6 +1038,24 @@ class MainWindow(QMainWindow):
     def _on_notes_changed(self, notes: str) -> None:
         self.session.notes = notes
 
+    def _on_environments_changed(self, selected: List[Dict[str, Any]]) -> None:
+        if not self.current_patient:
+            return
+        stored = []
+        for item in selected:
+            if not isinstance(item, dict):
+                continue
+            code = item.get('code')
+            if code is None:
+                continue
+            stored.append({'code': code, 'description': item.get('description')})
+        self.current_patient['ambienti'] = stored
+        try:
+            self.patient_repo.save(self.current_patient)
+            self.set_status(f"Ambienti associati all'assistito: {len(stored)} selezionati.", log=False)
+        except Exception as exc:
+            self.set_status(f"Errore salvataggio ambienti: {exc}")
+
     def _play_current_tone(self) -> None:
         if not self.current_profile:
             raise RuntimeError("Profilo di calibrazione non caricato.")
@@ -1028,6 +1119,7 @@ class MainWindow(QMainWindow):
             event.accept()
             return
         super().keyPressEvent(event)
+
 
 
 

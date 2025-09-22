@@ -55,6 +55,7 @@ class NewPatientDialog(QDialog):
             "cognome": cognome,
             "id": patient_id,
             "eta": eta,
+            "ambienti": [],
         }
         self.accept()
 
