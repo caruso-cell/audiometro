@@ -27,7 +27,6 @@ from PySide6.QtGui import QIcon, QPixmap
 from ui.menus import MenuBuilder
 from ui.audiogram_view import AudiogramView, FREQS
 from ui.sidebar_controls import SidebarControls
-from ui.environment_panel import EnvironmentChecklist
 from ui.dialogs import NewPatientDialog, OpenPatientDialog
 from ui.status_panel import HistoryPanel
 from ui.log_panel import LogPanel
@@ -117,8 +116,6 @@ class MainWindow(QMainWindow):
         central.setStyleSheet(f"#centralArea {{ background-color: {bg_color}; }}")
 
         self.sidebar = SidebarControls(self)
-        self.environment_panel = EnvironmentChecklist(self)
-        self.environment_panel.set_enabled(False)
         self.sidebar_placeholder_label = QLabel()
         self.sidebar_placeholder_label.setAlignment(Qt.AlignCenter)
         self.sidebar_placeholder_label.setWordWrap(True)
@@ -138,11 +135,7 @@ class MainWindow(QMainWindow):
         self.sidebar_stack.addWidget(self.sidebar_placeholder)
         self.sidebar_stack.addWidget(self.sidebar)
         sidebar_container = QWidget(self)
-        sidebar_layout = QVBoxLayout(sidebar_container)
-        sidebar_layout.setContentsMargins(0, 0, 0, 0)
-        sidebar_layout.setSpacing(12)
-        sidebar_layout.addLayout(self.sidebar_stack)
-        sidebar_layout.addWidget(self.environment_panel)
+        sidebar_container.setLayout(self.sidebar_stack)
         main_layout.addWidget(sidebar_container, 0)
 
         # Graph + placeholder
@@ -193,8 +186,7 @@ class MainWindow(QMainWindow):
         self.sidebar.stepChanged.connect(self._on_step_changed)
         self.sidebar.maskingToggled.connect(self._on_masking_toggled)
         self.sidebar.notesChanged.connect(self._on_notes_changed)
-        self.environment_panel.selectionChanged.connect(self._on_environments_changed)
-
+        self.sidebar.environmentsChanged.connect(self._on_environments_changed)
         self.history_panel.selectionChanged.connect(self._on_history_selection_changed)
         self.history_panel.exportPngRequested.connect(self._on_history_export_png)
         self.history_panel.exportPdfRequested.connect(self._on_history_export_pdf)
@@ -937,9 +929,7 @@ class MainWindow(QMainWindow):
         self._masking_enabled = False
         self._apply_state_to_controls()
         self._refresh_graph()
-        self.sidebar.set_notes(self.session.notes)
-        self.environment_panel.set_selected(patient.get('ambienti', []))
-        self.environment_panel.set_enabled(True)
+        self.sidebar.set_notes(self.session.notes)        self.sidebar.set_environments(patient.get('ambienti', []))        self.sidebar.set_environments_enabled(True)
         self._show_controls(False)
         self._show_graph(False)
         self._set_exam_controls_enabled(False)
@@ -1127,6 +1117,10 @@ class MainWindow(QMainWindow):
             event.accept()
             return
         super().keyPressEvent(event)
+
+
+
+
 
 
 
