@@ -1,5 +1,6 @@
 from __future__ import annotations
 from typing import List, Dict, Any
+from datetime import datetime
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QListWidget, QListWidgetItem, QTextEdit, QPushButton, QHBoxLayout
 from PySide6.QtCore import Qt, Signal
 
@@ -47,10 +48,14 @@ class HistoryPanel(QWidget):
     def set_exams(self, exams: List[Dict[str, Any]]) -> None:
         self.list_widget.clear()
         for exam in exams:
-            created = exam.get('created_at', 'sconosciuta')
-            summary = exam.get('summary', '')
-            text = f"{created} - {summary}".strip()
-            item = QListWidgetItem(text or created)
+            created_raw = exam.get('created_at')
+            label = 'Data sconosciuta'
+            if created_raw:
+                try:
+                    label = datetime.fromisoformat(str(created_raw)).strftime('%d/%m/%Y %H:%M')
+                except ValueError:
+                    label = str(created_raw)
+            item = QListWidgetItem(label)
             item.setData(Qt.UserRole, exam)
             self.list_widget.addItem(item)
         self.set_details('')

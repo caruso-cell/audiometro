@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
     QDialog,
 )
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QIcon
+from PySide6.QtGui import QIcon, QPixmap
 
 from ui.menus import MenuBuilder
 from ui.audiogram_view import AudiogramView, FREQS
@@ -56,13 +56,18 @@ class MainWindow(QMainWindow):
 
     def __init__(self, parent: Optional[QWidget] = None, cli_patient: Optional[Dict[str, Any]] = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Audiometria")
-        self.setWindowIcon(QIcon(resource_path('data/icona.png')))
+        self._brand_colors = self._load_brand_colors()
+        self.setWindowTitle("Audiometria 1.8")
+        icon_path = resource_path('assets/app.ico')
+        if not os.path.exists(icon_path):
+            icon_path = resource_path('data/icona.png')
+        self.setWindowIcon(QIcon(icon_path))
         self.resize(1200, 720)
 
         self._appdata = os.getenv("APPDATA") or os.path.expanduser("~")
         self._settings = load_settings(self._appdata)
         self._cli_patient = cli_patient
+        self._cli_patient_lock = bool(cli_patient)
 
         self.patient_repo = PatientRepo(self._appdata)
         self.audio_engine = AudioEngine()
@@ -93,12 +98,21 @@ class MainWindow(QMainWindow):
         self._builder.build()
 
         central = QWidget(self)
+        central.setObjectName('centralArea')
         root_layout = QVBoxLayout(central)
-        root_layout.setContentsMargins(6, 6, 6, 6)
+        root_layout.setContentsMargins(12, 12, 12, 12)
+        root_layout.setSpacing(12)
+
+        header_bar = self._build_header_bar()
+        root_layout.addWidget(header_bar, 0)
+
         main_layout = QHBoxLayout()
+        main_layout.setSpacing(12)
         root_layout.addLayout(main_layout, 1)
 
-        # Sidebar controls + placeholder
+        bg_color = self._brand_colors.get("bg", "#F4F5F7")
+        central.setStyleSheet(f"#centralArea {{ background-color: {bg_color}; }}")
+
         self.sidebar = SidebarControls(self)
         self.sidebar_placeholder_label = QLabel()
         self.sidebar_placeholder_label.setAlignment(Qt.AlignCenter)
@@ -130,12 +144,26 @@ class MainWindow(QMainWindow):
         self.graph_stack = QStackedLayout()
         self.graph_stack.addWidget(self.graph_placeholder_label)
         self.graph_stack.addWidget(self.graph)
+
+        graph_stack_host = QWidget(self)
+        graph_stack_host.setLayout(self.graph_stack)
+
+        self.mode_label = QLabel("Modalit\u00e0: In attesa di assistito")
+        self.mode_label.setAlignment(Qt.AlignCenter)
+        mode_color = self._brand_colors.get("fg", "#1F2937")
+        self.mode_label.setStyleSheet(f"font-weight: bold; padding: 4px 0; color: {mode_color};")
+
         graph_container = QWidget(self)
-        graph_container.setLayout(self.graph_stack)
+        graph_container_layout = QVBoxLayout(graph_container)
+        graph_container_layout.setContentsMargins(0, 0, 0, 0)
+        graph_container_layout.addWidget(self.mode_label)
+        graph_container_layout.addWidget(graph_stack_host, 1)
+
         main_layout.addWidget(graph_container, 1)
 
         # History panel
         self.history_panel = HistoryPanel(self)
+        self.history_panel.hide()
         main_layout.addWidget(self.history_panel, 0)
 
         # Log panel
@@ -280,8 +308,80 @@ class MainWindow(QMainWindow):
             widget.setEnabled(enabled)
         self.sidebar.btn_new.setEnabled(enabled)
 
+    def _load_brand_colors(self) -> Dict[str, str]:
+        defaults = {
+            'primary': '#043973',
+            'primary_dark': '#032B56',
+            'accent': '#0A5AA8',
+            'bg': '#F4F5F7',
+            'fg': '#1F2937',
+            'muted': '#A7A9AC',
+            'border': '#D6D7D8',
+            'surface': '#FFFFFF',
+            'surface_text': '#FFFFFF',
+            'tab_active': '#E8EEF5',
+        }
+        path = resource_path('assets/brand_colors.json')
+        try:
+            with open(path, 'r', encoding='utf-8') as handle:
+                data = json.load(handle)
+        except Exception:
+            data = None
+        if isinstance(data, dict):
+            for key, value in data.items():
+                if isinstance(value, str):
+                    defaults[key] = value
+        return defaults
+
     def _has_recorded_points(self) -> bool:
         return bool(self.session.points_od or self.session.points_os)
+
+
+    def _build_header_bar(self) -> QWidget:
+        bar = QWidget(self)
+        bar.setObjectName("headerBar")
+        layout = QHBoxLayout(bar)
+        layout.setContentsMargins(16, 10, 16, 10)
+        layout.setSpacing(16)
+
+        logo_label = QLabel()
+        logo_label.setObjectName("headerLogo")
+        pixmap = QPixmap(resource_path("assets/logo.png"))
+        if not pixmap.isNull():
+            logo_label.setPixmap(pixmap.scaledToHeight(52, Qt.SmoothTransformation))
+            logo_label.setFixedHeight(56)
+        layout.addWidget(logo_label, 0, Qt.AlignVCenter)
+
+        text_container = QVBoxLayout()
+        text_container.setContentsMargins(0, 0, 0, 0)
+        text_container.setSpacing(2)
+
+        title_label = QLabel("AudioFarm")
+        title_label.setObjectName("headerTitle")
+        subtitle_label = QLabel("Audiometria professionale e gestione completa dei risultati clinici")
+        subtitle_label.setObjectName("headerSubtitle")
+        subtitle_label.setWordWrap(True)
+
+        text_container.addWidget(title_label)
+        text_container.addWidget(subtitle_label)
+        layout.addLayout(text_container, 1)
+
+        layout.addStretch()
+
+        primary = self._brand_colors.get("primary", "#043973")
+        header_bg = self._brand_colors.get("accent", "#0A5AA8")
+        title_color = self._brand_colors.get("surface_text", "#FFFFFF")
+        subtitle_color = self._brand_colors.get("surface_text", "#FFFFFF")
+
+        style_lines = [
+            f"#headerBar {{ background-color: {header_bg}; border-radius: 12px; border: 2px solid {primary}; }}",
+            "#headerLogo { background-color: transparent; }",
+            f"#headerTitle {{ color: {title_color}; font-size: 20px; font-weight: 600; margin: 0; }}",
+            f"#headerSubtitle {{ color: {subtitle_color}; font-size: 12px; margin: 0; }}",
+        ]
+        bar.setStyleSheet("\\n".join(style_lines))
+
+        return bar
 
     def _build_results_table(self, od_map: dict[int, float] | None = None, os_map: dict[int, float] | None = None, freqs: list[int] | None = None) -> str:
         col_w = 6
@@ -303,6 +403,10 @@ class MainWindow(QMainWindow):
         line_od = f"{'OD (dB HL) dx':>{label_w}}: " + ' '.join(od_cells)
         line_os = f"{'OS (dB HL) sx':>{label_w}}: " + ' '.join(os_cells)
         return "\n".join([line_freq, line_od, line_os])
+
+    def _set_mode_label(self, text: str) -> None:
+        if hasattr(self, 'mode_label'):
+            self.mode_label.setText(text)
 
     def _export_base_filename(self) -> str:
         patient = self.current_patient or {}
@@ -530,6 +634,7 @@ class MainWindow(QMainWindow):
         data = dialog.get_result()
         if not data:
             return
+        self._cli_patient_lock = False
         self._activate_patient(data, persist=True)
         self.set_status(
             f"Assistito attivo: {data['nome']} {data['cognome']} (ID {data['id']})"
@@ -543,6 +648,7 @@ class MainWindow(QMainWindow):
         selected = dialog.get_selected()
         if not selected:
             return
+        self._cli_patient_lock = False
         self._activate_patient(selected, persist=False)
         self.set_status(
             f"Assistito attivo: {selected['nome']} {selected['cognome']} (ID {selected['id']})"
@@ -552,13 +658,15 @@ class MainWindow(QMainWindow):
         if not self.current_patient:
             self._prompt_patient_choice()
             if not self.current_patient:
-                self.set_status("Seleziona un assistito per iniziare un esame.")
+                self.set_status('Seleziona un assistito per iniziare un esame.')
                 return
         if not self.current_profile:
-            QMessageBox.warning(self, "Profilo mancante", "Carica un profilo di calibrazione valido.")
+            QMessageBox.warning(self, 'Profilo mancante', 'Carica un profilo di calibrazione valido.')
             return
         self.history_panel.list_widget.clearSelection()
+        self.history_panel.hide()
         self._clear_history_preview()
+        self._set_mode_label('Modalit\u00e0: Esegui audiometria')
         self.audio_engine.stop()
         self.session = AudiometrySession()
         self.session.notes = ''
@@ -572,7 +680,8 @@ class MainWindow(QMainWindow):
         self._show_controls(True)
         self._show_graph(True)
         self._set_exam_controls_enabled(True)
-        self.set_status("Esame manuale avviato. Registra i punti con i controlli dedicati.")
+        self.graph.setFocus()
+        self.set_status('Esame manuale avviato. Registra i punti con i controlli dedicati.')
 
     def _on_history_selection_changed(self, exams: List[Dict[str, Any]]) -> None:
         if not exams:
@@ -648,8 +757,15 @@ class MainWindow(QMainWindow):
             return
         self._refresh_exam_history()
         if self.history_panel.list_widget.count() == 0:
+            self.history_panel.hide()
+            self._set_mode_label('Modalit\u00e0: Esegui audiometria')
             QMessageBox.information(self, 'Risultati', 'Nessuna audiometria salvata per questo assistito.')
             return
+        self._set_mode_label('Modalit\u00e0: Visualizza risultati salvati')
+        self._show_controls(False)
+        self._set_exam_controls_enabled(False)
+        self._show_graph(True)
+        self.history_panel.show()
         self.history_panel.list_widget.setFocus()
         if not self.history_panel.list_widget.selectedItems():
             self.history_panel.list_widget.setCurrentRow(0)
@@ -747,6 +863,10 @@ class MainWindow(QMainWindow):
         self._show_graph(False)
         self._set_exam_controls_enabled(False)
         self.graph.set_overlays([])
+        self.history_panel.hide()
+        self._clear_history_preview()
+        self._history_selected_exam = None
+        self._set_mode_label('Modalit\u00e0: Esegui audiometria')
         self._update_status_bar()
         self._refresh_exam_history()
         self._update_placeholder_message()
@@ -908,19 +1028,6 @@ class MainWindow(QMainWindow):
             event.accept()
             return
         super().keyPressEvent(event)
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
