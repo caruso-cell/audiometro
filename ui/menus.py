@@ -31,6 +31,7 @@ class MenuBuilder:
         m_pt = mb.addMenu("ASSISTITO")
         m_aud = mb.addMenu("AUDIOMETRIA")
         m_exp = mb.addMenu("EXPORT")
+        m_help = mb.addMenu("AIUTO")
 
         # FILE
         act_open_cal = QAction("Apri calibrazione...", self.win)
@@ -66,11 +67,18 @@ class MenuBuilder:
         self._connect(act_manual, "start_manual_exam")
         self._connect(act_results, "show_results_browser")
 
+        # AIUTO
+        act_check_updates = QAction("Controlla aggiornamenti...", self.win)
+        m_help.addAction(act_check_updates)
+        self._connect(act_check_updates, "force_update_check")
+
         # EXPORT
         act_png = QAction("Esporta PNG grafico...", self.win)
         act_pdf = QAction("Crea relazione PDF A4...", self.win)
-        m_exp.addActions([act_png, act_pdf])
+        act_noah = QAction("Esporta NOAH XML...", self.win)
+        m_exp.addActions([act_png, act_pdf, act_noah])
         self._connect(act_png, "export_graph_png")
         self._connect(act_pdf, "create_pdf_report")
+        self._connect(act_noah, "export_noah_xml")
 
 

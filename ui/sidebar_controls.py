@@ -29,6 +29,7 @@ class SidebarControls(QWidget):
     storeRequested = Signal()
     maskingToggled = Signal(bool)
     notesChanged = Signal(str)
+    environmentsChanged = Signal(list)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)

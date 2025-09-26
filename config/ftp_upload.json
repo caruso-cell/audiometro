@@ -1,0 +1,12 @@
+{
+  "host": "ftp.audiomedicatrentina.it",
+  "port": 21,
+  "user": "2271530@aruba.it",
+  "password": "5..CHIAFRa",
+  "remote_dir": "/www.audiomedicatrentina.it/software/audiometro",
+  "use_tls": true,
+  "paths": [
+    "installer/Output/Audiometro_Setup_<nuova-versione>.exe",
+    "installer/update_manifest.json"
+  ]
+}

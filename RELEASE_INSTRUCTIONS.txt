@@ -1,0 +1,69 @@
+Istruzioni Distribuzione Audiometro
+==================================
+
+1. Imposta URL manifest aggiornamenti
+   - Percorso file: config\updates.py
+   - DEFAULT_MANIFEST_URL e' impostato su https://www.audiomedicatrentina.it/software/audiometro/update_manifest.json
+   - Modificalo solo se cambi dominio o percorso sul server
+
+2. Bump versione e genera manifest
+   - Comando: py tools\set_version.py <nuova-versione> --download-url https://www.audiomedicatrentina.it/software/audiometro/Audiometro_Setup_<nuova-versione>.exe
+   - Opzioni utili (facoltative):
+       --notes "testo note"
+       --notes-file note.txt
+       --size-bytes 77824000
+   - File aggiornati automaticamente:
+       - VERSION
+       - installer\version.isi
+       - installer\update_manifest.json
+
+3. Ricompila l'eseguibile standalone
+   - Comando: pyinstaller Audiometro.spec
+   - Risultato: dist\Audiometro.exe
+
+4. Rigenera l'installer Inno Setup
+   - Comando: iscc installer\SETUP.ISS (oppure apri SETUP.ISS con Inno Setup Compiler)
+   - Output: installer\Output\Audiometro_Setup_<nuova-versione>.exe
+
+5. Pubblica i file sul server
+   - Carica nella cartella pubblica:
+       - installer\Output\Audiometro_Setup_<nuova-versione>.exe
+       - installer\update_manifest.json
+   - Verifica che l'URL del manifest coincida con DEFAULT_MANIFEST_URL
+
+5b. Upload via FTP (opzionale)
+   - Config predefinito: config\ftp_upload.json punta al profilo FileZilla (aggiorna se cambi percorso).
+   - Esegui: py tools\upload_release.py installer\Output\Audiometro_Setup_<nuova-versione>.exe installer\update_manifest.json (usa set FTP_PASS=... prima, la password viene letta dal FileZilla.xml codificata base64).
+     (puoi usare --config per puntare a un altro file o parametri CLI per override puntuali).
+   - Se preferisci FTPS aggiungi --use-tls oppure imposta "use_tls": true nel config.
+
+6. Test locale opzionale
+   - Avvia dist\Audiometro.exe
+   - Entro pochi secondi deve apparire l'eventuale notifica se esiste una versione piu' recente sul server
+
+7. Distribuzione client
+   - Invia il link all'installer aggiornato oppure lascia che l'app aggiorni in automatico
+
+Note
+----
+- I parametri CLI (es. --nome, --cognome) restano supportati.
+- L'installer scaricato finisce in %APPDATA%\Farmaudiometria\updates.
+- L'UAC di Windows compare comunque quando parte l'installer.
+
+
+Rilascio completo automatizzato (opzionale)
+-------------------------------------------
+Esegui un solo comando:
+    py tools\\release_pipeline.py
+
+Opzioni utili:
+    --version 1.11.0                (per forzare un numero specifico)
+    --skip-upload                   (se vuoi solo build locale)
+    --upload-config <percorso>      (per usare un altro profilo FTP)
+
+Lo script esegue in ordine: set_version.py, PyInstaller, Inno Setup e upload FTP
+(utilizza config\ftp_upload.json e FileZilla.xml per le credenziali).
+
+
+
+

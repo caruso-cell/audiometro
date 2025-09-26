@@ -4,9 +4,14 @@ import os
 import json
 import re
 import shutil
+import subprocess
 import tempfile
 import sys
 from datetime import datetime
+from pathlib import Path
+
+from project_version import __version__, compare_versions
+from updates.manager import UpdateManager, UpdateManifest
 
 from PySide6.QtWidgets import (
     QMainWindow,
@@ -20,6 +25,7 @@ from PySide6.QtWidgets import (
     QStackedLayout,
     QPushButton,
     QDialog,
+    QApplication,
 )
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QIcon, QPixmap
@@ -57,7 +63,7 @@ class MainWindow(QMainWindow):
     def __init__(self, parent: Optional[QWidget] = None, cli_patient: Optional[Dict[str, Any]] = None) -> None:
         super().__init__(parent)
         self._brand_colors = self._load_brand_colors()
-        self.setWindowTitle("Audiometria 1.9")
+        self.setWindowTitle(f"Audiometria {__version__}")
         icon_path = resource_path('assets/app.ico')
         if not os.path.exists(icon_path):
             icon_path = resource_path('data/icona.png')
@@ -94,7 +100,12 @@ class MainWindow(QMainWindow):
         self._last_export_dir = os.getcwd()
         self._preview_cached_points: dict[str, dict[int, float]] | None = None
         self._preview_active = False
-        self._history_selected_exam: dict[str, Any] | None = None
+        self._history_selected_exam: Dict[str, Any] | None = None
+        self._update_manager: Optional[UpdateManager] = None
+        self._available_update: Optional[UpdateManifest] = None
+        self._last_manifest: Optional[UpdateManifest] = None
+        self._manual_update_pending = False
+        self._resume_data: Dict[str, Any] | None = self._load_resume_state()
 
         self._builder = MenuBuilder(self)
         self._builder.build()
@@ -204,12 +215,16 @@ class MainWindow(QMainWindow):
         self._apply_state_to_controls()
         self._refresh_graph()
         self._update_placeholder_message()
+        self._init_update_manager()
 
         QTimer.singleShot(0, self._initial_setup)
 
     # ----- Initial workflow -----
 
     def _initial_setup(self) -> None:
+        if self._resume_data and self._restore_session_from_resume():
+            self.set_status('Sessione ripristinata dopo aggiornamento.', log=False, timeout=6000)
+            return
         if self._cli_patient:
             self._activate_patient(self._cli_patient, persist=True)
             self.set_status("Assistito caricato da riga di comando.")
@@ -271,6 +286,284 @@ class MainWindow(QMainWindow):
                 self._set_current_device(default_device)
                 return
         self.select_output_device()
+
+    # ----- Update system -----
+
+    def _init_update_manager(self) -> None:
+        try:
+            self._update_manager = UpdateManager(
+                base_appdata=self._appdata,
+                settings=self._settings,
+                save_callback=self._save_settings,
+                parent=self,
+            )
+        except Exception as exc:
+            self.set_status(f'Aggiornamenti disattivati: {exc}', log=False, timeout=8000)
+            self._update_manager = None
+            return
+        self._update_manager.update_available.connect(self._on_update_available)
+        self._update_manager.update_check_failed.connect(self._on_update_check_failed)
+        self._update_manager.update_checked.connect(self._on_update_checked)
+        self._update_manager.download_started.connect(self._on_update_download_started)
+        self._update_manager.download_progress.connect(self._on_update_download_progress)
+        self._update_manager.download_failed.connect(self._on_update_download_failed)
+        self._update_manager.download_completed.connect(self._on_update_download_completed)
+        self._update_manager.schedule_weekly_check()
+        self._notify_pending_update()
+
+    def force_update_check(self) -> None:
+        if not self._update_manager:
+            QMessageBox.information(self, 'Aggiornamenti', 'Il gestore aggiornamenti non e disponibile.')
+            return
+        self._manual_update_pending = True
+        self.set_status('Controllo aggiornamenti in corso...', log=False, timeout=10000)
+        self._update_manager.force_check()
+
+    def _notify_pending_update(self) -> None:
+        if not self._update_manager:
+            return
+        pending = self._update_manager.pending_update()
+        if not pending:
+            return
+        path = pending.get('path')
+        manifest_payload = pending.get('manifest')
+        manifest: Optional[UpdateManifest] = None
+        if isinstance(manifest_payload, dict):
+            try:
+                manifest = UpdateManifest.from_dict(manifest_payload)
+            except ValueError:
+                manifest = None
+        version = pending.get('version') or (manifest.version if manifest else '?')
+        message = f"L'installer della versione {version} e' gia' stato scaricato."
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Information)
+        box.setWindowTitle('Aggiornamento scaricato')
+        box.setText(message)
+        notes = (manifest.release_notes if manifest else '') or ''
+        if notes:
+            box.setInformativeText(notes)
+            box.setDetailedText(notes)
+        install_btn = box.addButton('Installa ora', QMessageBox.AcceptRole)
+        box.addButton("Piu tardi", QMessageBox.RejectRole)
+        box.setDefaultButton(install_btn)
+        box.exec()
+        if box.clickedButton() == install_btn and path:
+            selected_manifest = manifest
+            if selected_manifest is None and isinstance(manifest_payload, dict):
+                try:
+                    selected_manifest = UpdateManifest.from_dict(manifest_payload)
+                except ValueError:
+                    selected_manifest = None
+            if selected_manifest is not None:
+                self._run_silent_installer(Path(path), selected_manifest)
+        else:
+            self.set_status("Aggiornamento gia' scaricato pronto per l'installazione.", log=False, timeout=8000)
+
+    def _on_update_check_failed(self, message: str) -> None:
+        self.set_status(f'Controllo aggiornamenti non riuscito: {message}', log=False, timeout=6000)
+        if self._manual_update_pending:
+            self._manual_update_pending = False
+            QMessageBox.warning(self, 'Aggiornamenti', f'Controllo aggiornamenti non riuscito: {message}')
+
+    def _on_update_available(self, manifest: UpdateManifest) -> None:
+        self._available_update = manifest
+        manual = self._manual_update_pending
+        self._manual_update_pending = False
+        self._show_update_dialog(manifest, manual=manual)
+
+    def _on_update_checked(self, manifest: UpdateManifest | None) -> None:
+        if manifest is not None:
+            self._last_manifest = manifest
+        if not self._manual_update_pending:
+            return
+        self._manual_update_pending = False
+        if manifest is None:
+            return
+        self._show_update_dialog(manifest, manual=True)
+
+    def _show_update_dialog(self, manifest: UpdateManifest, manual: bool) -> None:
+        available = compare_versions(manifest.version, __version__) > 0
+        message_lines = [
+            f"Versione installata: {__version__}",
+            f"Versione online: {manifest.version}",
+        ]
+        if manifest.size_bytes:
+            message_lines.append(
+                f"Dimensione installer: {self._format_bytes(int(manifest.size_bytes))}"
+            )
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Information)
+        box.setWindowTitle('Aggiornamento disponibile' if available else 'Nessun aggiornamento disponibile')
+        box.setText("\n".join(message_lines))
+        notes = (manifest.release_notes or '').strip()
+        if notes:
+            box.setInformativeText(notes)
+            box.setDetailedText(notes)
+        download_btn = None
+        if available and self._update_manager:
+            download_btn = box.addButton('Scarica e installa', QMessageBox.AcceptRole)
+            box.addButton('Piu tardi', QMessageBox.RejectRole)
+            box.setDefaultButton(download_btn)
+        else:
+            box.setStandardButtons(QMessageBox.Ok)
+        box.exec()
+        if available:
+            status_text = f"Nuova versione {manifest.version} disponibile."
+        else:
+            status_text = "Sei gia' alla versione piu' recente."
+        self.set_status(status_text, log=not manual and available, timeout=8000 if available else 6000)
+        if available and self._update_manager and download_btn and box.clickedButton() == download_btn:
+            self.set_status('Download aggiornamento in avvio...', log=False, timeout=6000)
+            self._update_manager.download_update(manifest)
+
+
+    def _on_update_download_started(self, manifest: UpdateManifest) -> None:
+        self.set_status(f"Download aggiornamento {manifest.version} avviato...", log=False, timeout=6000)
+
+    def _on_update_download_progress(self, received: int, total: int) -> None:
+        if total and total > 0:
+            percent = int((received / total) * 100)
+            message = (
+                f'Download aggiornamento: {percent}% ' +
+                f"({self._format_bytes(received)}/{self._format_bytes(total)})"
+            )
+        else:
+            message = f'Download aggiornamento: {self._format_bytes(received)} scaricati'
+        self.set_status(message, log=False, timeout=4000)
+
+    def _on_update_download_failed(self, error: str) -> None:
+        QMessageBox.warning(self, 'Aggiornamento', f'Download aggiornamento fallito: {error}')
+        self.set_status('Download aggiornamento fallito.', timeout=6000)
+
+    def _on_update_download_completed(self, path: str, manifest: UpdateManifest) -> None:
+        installer_path = Path(path)
+        if not installer_path.exists():
+            QMessageBox.warning(self, 'Aggiornamenti', "Installer scaricato non trovato.")
+            return
+        QMessageBox.information(self, 'Aggiornamenti', "Audiometro verra chiuso per completare l'aggiornamento e si riaprira automaticamente al termine.")
+        self.set_status("Aggiornamento scaricato. Avvio aggiornamento silenzioso...", log=False, timeout=8000)
+        self._run_silent_installer(installer_path, manifest)
+
+    def _run_silent_installer(self, installer_path: Path, manifest: UpdateManifest) -> None:
+        updates_dir = Path(self._appdata) / 'Farmaudiometria' / 'updates'
+        updates_dir.mkdir(parents=True, exist_ok=True)
+        resume_payload = self._build_resume_payload()
+        resume_path = updates_dir / 'resume.json'
+        try:
+            resume_path.write_text(json.dumps(resume_payload, ensure_ascii=False, indent=2), encoding='utf-8')
+        except OSError as exc:
+            QMessageBox.warning(self, 'Aggiornamenti', f'Impossibile preparare il ripristino: {exc}')
+            return
+        if self._update_manager:
+            self._update_manager.clear_pending()
+            self._save_settings()
+        program_root = os.environ.get('ProgramW6432') or os.environ.get('ProgramFiles')
+        primary_target = Path(program_root) / 'SW MIMMO' / 'AUDIOMETRO' / 'Audiometro.exe' if program_root else None
+        secondary_target = Path(resume_payload.get('exe_path', '')) if resume_payload.get('exe_path') else None
+        fallback_target = Path(sys.argv[0]).resolve()
+        primary_str = str(primary_target) if primary_target else ''
+        secondary_str = str(secondary_target) if secondary_target else str(fallback_target)
+        batch_path = updates_dir / 'run_update.bat'
+        batch_lines = [
+            '@echo off',
+            'setlocal',
+            f'start "" /wait "{installer_path}" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-',
+            f'if exist "{installer_path}" del /f /q "{installer_path}"',
+            f'set "PRIMARY={primary_str}"',
+            f'set "SECONDARY={secondary_str}"',
+            'if defined PRIMARY if exist "%PRIMARY%" (',
+            '    start "" "%PRIMARY%"',
+            ') else if exist "%SECONDARY%" (',
+            '    start "" "%SECONDARY%"',
+            ') else (',
+            f'    start "" "{secondary_str}"',
+            ')',
+            'endlocal',
+            'del "%~f0"',
+        ]
+        try:
+            batch_path.write_text('\r\n'.join(batch_lines) + '\r\n', encoding='utf-8')
+        except OSError as exc:
+            QMessageBox.warning(self, 'Aggiornamenti', f"Impossibile preparare l'aggiornamento: {exc}")
+            return
+        creationflags = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
+        try:
+            subprocess.Popen(['cmd.exe', '/c', str(batch_path)], creationflags=creationflags)
+        except Exception as exc:
+            QMessageBox.warning(self, 'Aggiornamenti', f'Avvio aggiornamento fallito: {exc}')
+            return
+        self.set_status("Aggiornamento in corso... Audiometro si riaprira automaticamente.", log=False, timeout=8000)
+        QTimer.singleShot(1000, QApplication.instance().quit)
+
+
+    def _build_resume_payload(self) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {}
+        if self.current_patient:
+            required = ['nome', 'cognome', 'eta', 'id']
+            patient = {key: self.current_patient.get(key) for key in required}
+            if all(patient.values()):
+                payload['patient'] = patient
+        if self.current_device:
+            device_id = self.current_device.get('wasapi_id')
+            if device_id:
+                payload['device_id'] = device_id
+        payload['exe_path'] = str(Path(sys.argv[0]).resolve())
+        payload['timestamp'] = datetime.now().isoformat()
+        return payload
+
+    def _load_resume_state(self) -> Dict[str, Any] | None:
+        updates_dir = Path(self._appdata) / 'Farmaudiometria' / 'updates'
+        resume_path = updates_dir / 'resume.json'
+        if not resume_path.exists():
+            return None
+        try:
+            data = json.loads(resume_path.read_text(encoding='utf-8'))
+        except (OSError, json.JSONDecodeError):
+            resume_path.unlink(missing_ok=True)
+            return None
+        resume_path.unlink(missing_ok=True)
+        return data if isinstance(data, dict) else None
+
+    def _restore_session_from_resume(self) -> bool:
+        data = self._resume_data
+        if not data:
+            return False
+        restored = False
+        patient_data = data.get('patient')
+        if isinstance(patient_data, dict):
+            required = ['nome', 'cognome', 'eta', 'id']
+            if all(key in patient_data and patient_data[key] is not None for key in required):
+                patient = {key: patient_data[key] for key in required}
+                try:
+                    patient['eta'] = int(patient['eta'])
+                except (TypeError, ValueError):
+                    patient['eta'] = None
+                if patient['eta'] is not None:
+                    self._activate_patient(patient, persist=False)
+                    restored = True
+        device_id = data.get('device_id')
+        if device_id:
+            devices = list_output_devices()
+            match = next((dev for dev in devices if dev.get('wasapi_id') == device_id), None)
+            if match:
+                self._set_current_device(match)
+                self.set_status(f"Cuffia ripristinata: {match.get('name', device_id)}", log=False, timeout=6000)
+                restored = True
+        self._resume_data = None
+        return restored
+
+    @staticmethod
+    def _format_bytes(value: int) -> str:
+        if value <= 0:
+            return '0 B'
+        amount = float(value)
+        for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+            if amount < 1024 or unit == 'TB':
+                if unit == 'B':
+                    return f'{int(amount)} {unit}'
+                return f'{amount:.1f} {unit}'
+            amount /= 1024
+        return f'{value} B'
 
     # ----- Helpers -----
 
@@ -929,7 +1222,9 @@ class MainWindow(QMainWindow):
         self._masking_enabled = False
         self._apply_state_to_controls()
         self._refresh_graph()
-        self.sidebar.set_notes(self.session.notes)        self.sidebar.set_environments(patient.get('ambienti', []))        self.sidebar.set_environments_enabled(True)
+        self.sidebar.set_notes(self.session.notes)
+        self.sidebar.set_environments(patient.get('ambienti', []))
+        self.sidebar.set_environments_enabled(True)
         self._show_controls(False)
         self._show_graph(False)
         self._set_exam_controls_enabled(False)
@@ -1117,6 +1412,7 @@ class MainWindow(QMainWindow):
             event.accept()
             return
         super().keyPressEvent(event)
+
 
 
 
