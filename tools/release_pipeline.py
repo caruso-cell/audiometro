@@ -65,10 +65,10 @@ def _collect_auto_notes(version: str) -> str:
     summary_lines: List[str] = []
     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M')
     summary_lines.append(f"Versione {version} pubblicata il {timestamp}.")
-    summary_lines.append('Novita:')
+    summary_lines.append('Novit\u00e0:')
     summary_lines.append('- Aggiornamenti recenti al codice base (vedi changelog).')
     summary_lines.append('- Migliorata gestione auto-update con installazione automatica.')
-    summary_lines.append('- Ripristino automatico del paziente e della cuffia dopo l\'aggiornamento.')
+    summary_lines.append("- Ripristino automatico del paziente e della cuffia dopo l'aggiornamento.")
 
     try:
         result = subprocess.run(
@@ -101,12 +101,13 @@ def main() -> int:
     parser.add_argument('--download-url', help="URL completo dell'installer; default basato sul dominio Audiomedicatrentina.")
     parser.add_argument('--pyinstaller-extra', nargs=argparse.REMAINDER, help='Argomenti extra da passare a PyInstaller.')
     parser.add_argument('--iscc-path', help='Percorso di ISCC.exe (default prova a trovarlo automaticamente).')
-    parser.add_argument('--skip-build', action='store_true', help='Salta PyInstaller (usa solo se dist/Audiometro.exe è già aggiornato).')
+    parser.add_argument('--skip-build', action='store_true', help='Salta PyInstaller (usa solo se dist/Audiometro.exe \u00e8 gi\u00e0 aggiornato).')
     parser.add_argument('--skip-installer', action='store_true', help='Salta compilazione Inno Setup.')
     parser.add_argument('--skip-upload', action='store_true', help='Non esegue upload FTP finale.')
     parser.add_argument('--upload-config', help='Config JSON personalizzato per upload_release.py. Default config/ftp_upload.json.')
     parser.add_argument('--filezilla', help='Percorso alternativo FileZilla.xml da usare per upload.')
     parser.add_argument('--server-name', help='Nome profilo FileZilla da selezionare.')
+    parser.add_argument('--keep-installer-copy', action='store_true', help='Duplica il setup finale in dist/ per conservarlo accanto alla build PyInstaller.')
     args = parser.parse_args()
 
     current = read_version()
@@ -166,6 +167,11 @@ def main() -> int:
             _run([iscc_exe, str(ROOT / 'installer' / 'SETUP.ISS')], cwd=ROOT)
             if not setup_path.exists():
                 raise SystemExit(f'Installer atteso non trovato: {setup_path}')
+            if args.keep_installer_copy:
+                copy_path = ROOT / 'dist' / setup_path.name
+                copy_path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(setup_path, copy_path)
+                print(f'[info] Copia installer disponibile in {copy_path}')
             if args.size_bytes is None and setup_path.exists():
                 size = setup_path.stat().st_size
                 print(f'[info] Aggiorno manifest con size-bytes={size}')
@@ -211,5 +217,3 @@ def main() -> int:
 
 if __name__ == '__main__':
     raise SystemExit(main())
-
-
