@@ -2,12 +2,21 @@
 
 import json
 import os
+import ssl
 from dataclasses import dataclass, asdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
 from urllib.parse import urlsplit
 from urllib.request import urlopen
+
+try:
+    import certifi  # type: ignore[import]
+except ImportError:  # pragma: no cover - optional dependency
+    certifi = None  # type: ignore[assignment]
+
+_SSL_CONTEXT: ssl.SSLContext | None = None
+
 
 from PySide6.QtCore import QObject, QThread, QTimer, Signal
 
@@ -17,6 +26,23 @@ from config.updates import (
     DOWNLOAD_TIMEOUT_SECONDS,
 )
 from project_version import __version__, compare_versions
+
+
+def _ssl_context() -> ssl.SSLContext:
+    global _SSL_CONTEXT
+    if _SSL_CONTEXT is None:
+        if certifi is not None:
+            try:
+                _SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
+            except Exception:  # pragma: no cover - fallback
+                _SSL_CONTEXT = ssl.create_default_context()
+        else:
+            _SSL_CONTEXT = ssl.create_default_context()
+    return _SSL_CONTEXT
+
+
+def _open_url(url: str, timeout: int):
+    return urlopen(url, timeout=timeout, context=_ssl_context())
 
 
 @dataclass
@@ -66,7 +92,7 @@ class _ManifestFetchThread(QThread):
 
     def run(self) -> None:  # type: ignore[override]
         try:
-            with urlopen(self._url, timeout=self._timeout) as response:
+            with _open_url(self._url, timeout=self._timeout) as response:
                 data = response.read().decode('utf-8')
             manifest = json.loads(data)
         except Exception as exc:  # pragma: no cover - network failure path
@@ -90,7 +116,7 @@ class _DownloadThread(QThread):
         received = 0
         total = -1
         try:
-            with urlopen(self._url, timeout=self._timeout) as response:
+            with _open_url(self._url, timeout=self._timeout) as response:
                 length = response.headers.get('Content-Length')
                 if length:
                     try:

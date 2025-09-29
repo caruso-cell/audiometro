@@ -1,11 +1,11 @@
 {
-  "version": "1.9.13",
-  "installer_basename": "Audiometro_Setup_1.9.13.exe",
-  "installer_url": "https://www.audiomedicatrentina.it/software/audiometro/Audiometro_Setup_1.9.13.exe",
-  "release_notes": "Versione 1.9.13 pubblicata il 2025-09-29 16:46.\nNovit\u00e0:\n- Aggiornamenti recenti al codice base (vedi changelog).\n- Migliorata gestione auto-update con installazione automatica.\n- Ripristino automatico del paziente e della cuffia dopo l'aggiornamento.\nUltime commit:\nbe2cd04 Use Documents storage and seed default calibration\na8415a3 Automated release pipeline, auto-update dialog, silent installer\nc1fb253 Ambienti integrati nel pannello laterale",
-  "size_bytes": 83270829,
-  "published_at": "2025-09-29T14:47:32.683890+00:00",
-  "generated_at": "2025-09-29T14:47:32.683898+00:00",
-  "installer_relative_path": "Output/Audiometro_Setup_1.9.13.exe",
+  "version": "1.9.14",
+  "installer_basename": "Audiometro_Setup_1.9.14.exe",
+  "installer_url": "https://www.audiomedicatrentina.it/software/audiometro/Audiometro_Setup_1.9.14.exe",
+  "release_notes": "Versione 1.9.14 pubblicata il 2025-09-29 17:11.\nNovit\u00e0:\n- Aggiornamenti recenti al codice base (vedi changelog).\n- Migliorata gestione auto-update con installazione automatica.\n- Ripristino automatico del paziente e della cuffia dopo l'aggiornamento.\nUltime commit:\n362f3e6 Keep installer copy after pipeline runs\nbe2cd04 Use Documents storage and seed default calibration\na8415a3 Automated release pipeline, auto-update dialog, silent installer",
+  "size_bytes": 83289816,
+  "published_at": "2025-09-29T15:12:02.327510+00:00",
+  "generated_at": "2025-09-29T15:12:02.327519+00:00",
+  "installer_relative_path": "Output/Audiometro_Setup_1.9.14.exe",
   "build_relative_path": "dist/Audiometro.exe"
 }
