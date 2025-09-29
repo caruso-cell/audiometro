@@ -14,6 +14,9 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt
 
+import uuid
+from datetime import datetime
+
 
 class NewPatientDialog(QDialog):
     """Dialog per creare un nuovo assistito. Restituisce dict con nome/cognome/eta/id."""
@@ -28,6 +31,10 @@ class NewPatientDialog(QDialog):
         self._ed_nome = QLineEdit()
         self._ed_cognome = QLineEdit()
         self._ed_id = QLineEdit()
+        self._ed_id.setReadOnly(True)
+        self._ed_id.setText(self._generate_patient_id())
+        self._ed_id.setCursorPosition(0)
+        self._ed_id.setToolTip('Generato automaticamente')
         self._sp_eta = QSpinBox()
         self._sp_eta.setRange(0, 120)
         self._sp_eta.setValue(40)
@@ -42,14 +49,22 @@ class NewPatientDialog(QDialog):
         self._buttons.rejected.connect(self.reject)
         layout.addWidget(self._buttons)
 
+    def _generate_patient_id(self) -> str:
+        stamp = datetime.now().strftime('%Y%m%d')
+        suffix = uuid.uuid4().hex[:6].upper()
+        return f'PAT-{stamp}-{suffix}'
+
     def _on_accept(self) -> None:
         nome = self._ed_nome.text().strip()
         cognome = self._ed_cognome.text().strip()
         patient_id = self._ed_id.text().strip()
         eta = int(self._sp_eta.value())
-        if not nome or not cognome or not patient_id:
-            QMessageBox.warning(self, "Campi mancanti", "Compila nome, cognome e ID assistito.")
+        if not nome or not cognome:
+            QMessageBox.warning(self, "Campi mancanti", "Compila nome e cognome.")
             return
+        if not patient_id:
+            patient_id = self._generate_patient_id()
+            self._ed_id.setText(patient_id)
         self._result = {
             "nome": nome,
             "cognome": cognome,

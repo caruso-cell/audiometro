@@ -11,6 +11,7 @@ from datetime import datetime
 from pathlib import Path
 
 from project_version import __version__, compare_versions
+from config.data_dirs import ensure_data_dirs, DataDirectories
 from updates.manager import UpdateManager, UpdateManifest
 
 from PySide6.QtWidgets import (
@@ -72,12 +73,18 @@ class MainWindow(QMainWindow):
 
         self._appdata = os.getenv("APPDATA") or os.path.expanduser("~")
         self._settings = load_settings(self._appdata)
+        self._data_dirs: DataDirectories = ensure_data_dirs()
+        self._data_root = self._data_dirs.root
+        self._patients_dir = self._data_dirs.patients
+        self._calibration_root = self._data_dirs.calibrations
+        self._export_dir = self._data_dirs.export
+        self._seed_default_calibration()
         self._cli_patient = cli_patient
         if self._cli_patient is not None:
             self._cli_patient.setdefault('ambienti', [])
         self._cli_patient_lock = bool(cli_patient)
 
-        self.patient_repo = PatientRepo(self._appdata)
+        self.patient_repo = PatientRepo(self._appdata, data_root=self._data_root)
         self.audio_engine = AudioEngine()
         self.session = AudiometrySession()
 
@@ -97,7 +104,7 @@ class MainWindow(QMainWindow):
         self._tone_timeout.setSingleShot(True)
         self._tone_timeout.timeout.connect(self.stop_audio)
 
-        self._last_export_dir = os.getcwd()
+        self._last_export_dir = str(self._export_dir)
         self._preview_cached_points: dict[str, dict[int, float]] | None = None
         self._preview_active = False
         self._history_selected_exam: Dict[str, Any] | None = None
@@ -464,23 +471,29 @@ class MainWindow(QMainWindow):
         primary_str = str(primary_target) if primary_target else ''
         secondary_str = str(secondary_target) if secondary_target else str(fallback_target)
         batch_path = updates_dir / 'run_update.bat'
+        targets: list[str] = []
+        for candidate in (primary_str, secondary_str, str(fallback_target)):
+            if candidate and candidate not in targets:
+                targets.append(candidate)
         batch_lines = [
             '@echo off',
-            'setlocal',
-            f'start "" /wait "{installer_path}" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-',
-            f'if exist "{installer_path}" del /f /q "{installer_path}"',
-            f'set "PRIMARY={primary_str}"',
-            f'set "SECONDARY={secondary_str}"',
-            'if defined PRIMARY if exist "%PRIMARY%" (',
-            '    start "" "%PRIMARY%"',
-            ') else if exist "%SECONDARY%" (',
-            '    start "" "%SECONDARY%"',
-            ') else (',
-            f'    start "" "{secondary_str}"',
-            ')',
+            'setlocal enableextensions',
+            f'"{installer_path}" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-',
+            'set "ERR=%ERRORLEVEL%"',
+            f'if exist "{installer_path}" del /f /q "{installer_path}" >nul 2>&1',
+        ]
+        for target in targets:
+            safe = target.replace('"', '""')
+            batch_lines.append(f'if exist "{safe}" (')
+            batch_lines.append(f'    start "" "{safe}"')
+            batch_lines.append('    goto :launch_done')
+            batch_lines.append(')')
+        batch_lines.extend([
+            ':launch_done',
             'endlocal',
             'del "%~f0"',
-        ]
+            'exit /b %ERR%',
+        ])
         try:
             batch_path.write_text('\r\n'.join(batch_lines) + '\r\n', encoding='utf-8')
         except OSError as exc:
@@ -713,7 +726,7 @@ class MainWindow(QMainWindow):
         return base
 
     def _suggest_export_path(self, extension: str) -> str:
-        directory = self._last_export_dir or os.getcwd()
+        directory = self._last_export_dir or str(self._export_dir)
         base = self._export_base_filename()
         return os.path.join(directory, f"{base}{extension}")
 
@@ -730,7 +743,7 @@ class MainWindow(QMainWindow):
         except Exception:
             rows = []
         try:
-            history = list_patient_exams(self._appdata, str(self.current_patient.get('id', '')))
+            history = list_patient_exams(self._appdata, str(self.current_patient.get('id', '')), data_root=self._data_root)
         except Exception:
             history = []
         history_exam = self._history_selected_exam
@@ -812,7 +825,7 @@ class MainWindow(QMainWindow):
         if not self.current_patient:
             self.history_panel.set_exams([])
             return
-        exams = list_patient_exams(self._appdata, str(self.current_patient['id']))
+        exams = list_patient_exams(self._appdata, str(self.current_patient['id']), data_root=self._data_root)
         self.history_panel.set_exams(exams)
 
     # ----- Menu actions -----
@@ -878,6 +891,16 @@ class MainWindow(QMainWindow):
             self.open_calibration_file()
         self._update_placeholder_message()
 
+    def _seed_default_calibration(self) -> None:
+        source = Path(resource_path('assets/fondatore.json'))
+        dest = self._calibration_root / 'fondatore.json'
+        try:
+            if source.exists() and not dest.exists():
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source, dest)
+        except OSError:
+            pass
+
     def _ensure_calibration_for_current_device(self) -> bool:
         if not self.current_device:
             return False
@@ -888,7 +911,7 @@ class MainWindow(QMainWindow):
             self._load_and_store_profile(stored_path, skip_copy=True)
             self.set_status("Profilo di calibrazione caricato automaticamente.")
             return True
-        profile_path = local_profile_path_for_device(self._appdata, wasapi_id)
+        profile_path = local_profile_path_for_device(self._appdata, wasapi_id, self._calibration_root)
         if profile_path:
             self._load_and_store_profile(profile_path, skip_copy=True)
             self.set_status("Profilo di calibrazione trovato nella cartella locale.")
@@ -902,7 +925,7 @@ class MainWindow(QMainWindow):
         path, _ = QFileDialog.getOpenFileName(
             self,
             "Apri calibrazione",
-            "",
+            str(self._calibration_root),
             "Profili calibrazione (*.json *.yaml *.yml)",
         )
         if not path:
@@ -917,7 +940,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Profilo mancante", "Seleziona cuffie e profilo di calibrazione valido.")
             return
         exam = self.session.to_dict(self.current_patient, self.current_device, self.current_profile)
-        path = save_exam(self._appdata, str(self.current_patient['id']), exam)
+        path = save_exam(self._appdata, str(self.current_patient['id']), exam, data_root=self._data_root)
         self.last_exam_path = path
         self._refresh_exam_history()
         self.set_status(f"Audiometria salvata: {os.path.basename(path)}")
@@ -1092,7 +1115,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Assistito mancante", "Seleziona un assistito prima di esportare.")
             return
         self.set_status('Esportazione NOAH: preparazione audiometrie...')
-        exams = list_patient_exams(self._appdata, str(self.current_patient.get('id', '')))
+        exams = list_patient_exams(self._appdata, str(self.current_patient.get('id', '')), data_root=self._data_root)
         suggested = self._suggest_export_path('.xml')
         out_path, _ = QFileDialog.getSaveFileName(
             self,
@@ -1109,7 +1132,7 @@ class MainWindow(QMainWindow):
             if history_exam and not history_exam.get('meta', {}).get('path'):
                 data = history_exam.get('data')
                 if data:
-                    tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.json', prefix='noah_', dir=os.getcwd())
+                    tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.json', prefix='noah_', dir=str(self._export_dir))
                     temp_paths.append(tmp.name)
                     tmp.close()
                     with open(temp_paths[-1], 'w', encoding='utf-8') as handle:
@@ -1130,7 +1153,7 @@ class MainWindow(QMainWindow):
                     QMessageBox.warning(self, 'Esportazione NOAH', f"Impossibile preparare l'esame corrente: {exc}")
                     self.set_status(f'Esportazione NOAH annullata: {exc}')
                     return
-                tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.json', prefix='noah_', dir=os.getcwd())
+                tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.json', prefix='noah_', dir=str(self._export_dir))
                 temp_paths.append(tmp.name)
                 tmp.close()
                 with open(temp_paths[-1], 'w', encoding='utf-8') as handle:
@@ -1246,25 +1269,25 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Profilo non valido", str(exc))
             return
         wasapi_id = self.current_device.get('wasapi_id', 'unknown')
-        dest_folder = os.path.join(self._appdata, "Farmaudiometria", "calibrations", wasapi_id)
-        os.makedirs(dest_folder, exist_ok=True)
+        dest_folder = self._calibration_root / wasapi_id
+        dest_folder.mkdir(parents=True, exist_ok=True)
         filename = os.path.basename(path)
-        dest_path = os.path.join(dest_folder, filename)
+        dest_path = dest_folder / filename
         if not skip_copy:
             try:
-                if os.path.abspath(path) != os.path.abspath(dest_path):
+                if Path(path).resolve() != dest_path.resolve():
                     shutil.copy2(path, dest_path)
             except OSError as exc:
                 QMessageBox.warning(self, "Errore copia", f"Impossibile copiare il profilo:\n{exc}")
                 return
         self.current_profile = profile
-        self.current_profile_path = dest_path
+        self.current_profile_path = str(dest_path)
         if hasattr(self.audio_engine, "set_profile"):
             self.audio_engine.set_profile(profile)
         else:
             self.audio_engine.profile = profile  # type: ignore[attr-defined]
         calib_map = self._settings.setdefault('calibrations', {})
-        calib_map[wasapi_id] = dest_path
+        calib_map[wasapi_id] = str(dest_path)
         self._save_settings()
         self._update_status_bar()
         self.set_status("Profilo di calibrazione caricato con successo.")

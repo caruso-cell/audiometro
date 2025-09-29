@@ -34,10 +34,17 @@ Name: "italian"; MessagesFile: "compiler:Languages\Italian.isl"
 [Tasks]
 Name: "desktopicon"; Description: "Crea &icona sul Desktop"; GroupDescription: "Icone:"; Flags: unchecked
 
+[Dirs]
+Name: "{userdocs}\SW_MIMMO\Audiometro"; Flags: uninsalwaysuninstall
+Name: "{userdocs}\SW_MIMMO\Audiometro\Pazienti"; Flags: uninsalwaysuninstall
+Name: "{userdocs}\SW_MIMMO\Audiometro\Calibrazioni"; Flags: uninsalwaysuninstall
+Name: "{userdocs}\SW_MIMMO\Audiometro\Export"; Flags: uninsalwaysuninstall
+
 [Files]
 ; Copia il tuo eseguibile nella cartella dell'app
 Source: "..\\dist\\{#AppExe}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "audiometria_protocol.ps1"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\assets\fondatore.json"; DestDir: "{userdocs}\SW_MIMMO\Audiometro\Calibrazioni"; DestName: "fondatore.json"; Flags: ignoreversion
 ; Aggiungi qui eventuali altri file richiesti:
 ; Source: "C:\PERCORSO\BUILD\dist\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion
 
@@ -57,6 +64,13 @@ Root: HKCR; Subkey: "audiometria\DefaultIcon"; ValueType: string; ValueName: "";
 Root: HKCR; Subkey: "audiometria\shell"; ValueType: none; Flags: uninsdeletekey
 Root: HKCR; Subkey: "audiometria\shell\open"; ValueType: none; Flags: uninsdeletekey
 Root: HKCR; Subkey: "audiometria\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExe}"" ""%1"""; Flags: uninsdeletekey
+; Alias protocollo audiometro://
+Root: HKCR; Subkey: "audiometro"; ValueType: string; ValueName: ""; ValueData: "URL:Protocollo audiometro"; Flags: uninsdeletekey
+Root: HKCR; Subkey: "audiometro"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""; Flags: uninsdeletekey
+Root: HKCR; Subkey: "audiometro\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#AppExe},0"; Flags: uninsdeletekey
+Root: HKCR; Subkey: "audiometro\shell"; ValueType: none; Flags: uninsdeletekey
+Root: HKCR; Subkey: "audiometro\shell\open"; ValueType: none; Flags: uninsdeletekey
+Root: HKCR; Subkey: "audiometro\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExe}"" ""%1"""; Flags: uninsdeletekey
 
 
 [Run]

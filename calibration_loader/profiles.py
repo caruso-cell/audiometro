@@ -167,16 +167,20 @@ def profile_hash(profile: Dict[str, Any]) -> str:
     return hashlib.sha256(raw).hexdigest()
 
 
-def local_profile_path_for_device(appdata: str, wasapi_id: str) -> Optional[str]:
+def local_profile_path_for_device(appdata: str, wasapi_id: str, data_root: str | Path | None = None) -> Optional[str]:
     """
     Cerca un profilo locale per l'ID specificato.
     Ritorna path o None se assente.
     """
-    folder = os.path.join(appdata, 'Farmaudiometria', 'calibrations', wasapi_id)
-    if not os.path.isdir(folder):
+    if data_root is not None:
+        folder = Path(data_root) / wasapi_id
+    else:
+        folder = Path(appdata) / 'Farmaudiometria' / 'calibrations' / wasapi_id
+    if not folder.is_dir():
         return None
     valid_ext = {'.json', '.yaml', '.yml'}
-    for fn in sorted(os.listdir(folder)):
-        if Path(fn).suffix.lower() in valid_ext:
-            return os.path.join(folder, fn)
+    for file_path in sorted(folder.iterdir()):
+        if file_path.suffix.lower() in valid_ext:
+            return str(file_path)
     return None
+

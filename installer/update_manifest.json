@@ -1,0 +1,11 @@
+{
+  "version": "1.9.13",
+  "installer_basename": "Audiometro_Setup_1.9.13.exe",
+  "installer_url": "https://www.audiomedicatrentina.it/software/audiometro/Audiometro_Setup_1.9.13.exe",
+  "release_notes": "Versione 1.9.13 pubblicata il 2025-09-29 16:29.\nNovita:\n- Aggiornamenti recenti al codice base (vedi changelog).\n- Migliorata gestione auto-update con installazione automatica.\n- Ripristino automatico del paziente e della cuffia dopo l'aggiornamento.\nUltime commit:\na8415a3 Automated release pipeline, auto-update dialog, silent installer\nc1fb253 Ambienti integrati nel pannello laterale\n079eff7 Pannello ambienti sempre accessibile",
+  "size_bytes": 83270889,
+  "published_at": "2025-09-29T14:29:43.889982+00:00",
+  "generated_at": "2025-09-29T14:29:43.889989+00:00",
+  "installer_relative_path": "Output/Audiometro_Setup_1.9.13.exe",
+  "build_relative_path": "dist/Audiometro.exe"
+}
